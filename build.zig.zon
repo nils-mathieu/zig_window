@@ -1,0 +1,11 @@
+.{
+    .name = .zig_window,
+    .version = "0.0.0",
+    .fingerprint = 0xc7b4225aa85bb478,
+    .paths = .{
+        "examples",
+        "srcs",
+        "build.zig",
+        "build.zig.zon",
+    },
+}
