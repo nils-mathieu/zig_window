@@ -7,4 +7,28 @@
 //!
 //! 2. Running the application to completion using `App.run()`.
 
-pub fn main() !void {}
+const zw = @import("zig_window");
+const std = @import("std");
+
+const App = struct {};
+
+fn onEvent(app: *App, event_loop: *zw.EventLoop, event: zw.Event) void {
+    _ = app;
+    _ = event_loop;
+
+    switch (event) {
+        else => {},
+    }
+}
+
+pub fn main() zw.Error!void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+
+    var app = App{};
+
+    try zw.run(.{
+        .allocator = gpa.allocator(),
+        .user_app = .init(App, &app, onEvent),
+    });
+}

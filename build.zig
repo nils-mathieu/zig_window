@@ -42,6 +42,7 @@ pub fn build(b: *std.Build) void {
     const zig_window_module = b.addModule("zig_window", .{
         .root_source_file = b.path("src/root.zig"),
     });
+    zig_window_module.addImport("zig_window", zig_window_module);
 
     // ============
     // = Examples =
