@@ -76,12 +76,36 @@ pub const interface = struct {
             return self.platform_specific.getClientRect().size();
         }
 
+        pub inline fn surfacePosition(self: *zw.Window) zw.Position {
+            return self.platform_specific.getClientRect().position();
+        }
+
         pub inline fn outerRect(self: *zw.Window) zw.Rect {
             return self.platform_specific.getWindowRect();
         }
 
         pub inline fn outerSize(self: *zw.Window) zw.Size {
             return self.platform_specific.getWindowRect().size();
+        }
+
+        pub inline fn outerPosition(self: *zw.Window) zw.Position {
+            return self.platform_specific.getWindowRect().position();
+        }
+
+        pub inline fn requestSurfaceSize(self: *zw.Window, size: zw.Size) void {
+            self.platform_specific.setClientSize(size);
+        }
+
+        pub inline fn setMinSurfaceSize(self: *zw.Window, size: zw.Size) void {
+            self.platform_specific.min_surface_size = size;
+            const current_size = self.platform_specific.getClientRect().size();
+            self.platform_specific.setClientSize(current_size);
+        }
+
+        pub inline fn setMaxSurfaceSize(self: *zw.Window, size: zw.Size) void {
+            self.platform_specific.max_surface_size = size;
+            const current_size = self.platform_specific.getClientRect().size();
+            self.platform_specific.setClientSize(current_size);
         }
     };
 };
@@ -334,14 +358,10 @@ pub const Window = struct {
     /// A reference to the event loop that this window is managed by.
     event_loop: *EventLoop,
 
-    /// The minimum width of the window.
-    min_width: u32,
-    /// The maximum width of the window.
-    max_width: u32,
-    /// The minimum height of the window.
-    min_height: u32,
-    /// The maximum height of the window.
-    max_height: u32,
+    /// The minimum size that the window is allowed to take.
+    min_surface_size: zw.Size,
+    /// The maximum size that the window is allowed to take.
+    max_surface_size: zw.Size,
 
     /// The raw window handle of the window.
     ///
@@ -480,18 +500,20 @@ pub const Window = struct {
     }
 
     /// Adjusts the provided client size to the "outer" size that the window will have.
-    pub fn clientToWindowSize(self: *Window, width: *u32, height: *u32) error{PlatformError}!void {
+    pub fn clientToWindowSize(self: *Window, size: zw.Size) error{PlatformError}!zw.Size {
         var rect: win32.foundation.RECT = .{
             .left = 0,
             .top = 0,
-            .bottom = std.math.lossyCast(i32, height.*),
-            .right = std.math.lossyCast(i32, width.*),
+            .bottom = std.math.lossyCast(i32, size.height),
+            .right = std.math.lossyCast(i32, size.width),
         };
 
         try self.clientToWindowRect(&rect);
 
-        width.* = @abs(rect.right -% rect.left);
-        height.* = @abs(rect.top -% rect.bottom);
+        return zw.Size{
+            .width = @abs(rect.right - rect.left),
+            .height = @abs(rect.bottom - rect.top),
+        };
     }
 
     /// Sets the window's size.
@@ -500,8 +522,8 @@ pub const Window = struct {
     ///
     /// This function takes the "outer" width and height of the window as opposed to the window's
     /// client size.
-    pub fn setWindowSize(self: *Window, width: u32, height: u32) void {
-        self.setWindowPos(null, null, .{ width, height }, false, null);
+    pub fn setWindowSize(self: *Window, new_size: zw.Size) void {
+        self.setWindowPos(null, null, new_size, false, null);
     }
 
     /// Returns the current client rect of the window.
@@ -545,17 +567,16 @@ pub const Window = struct {
     }
 
     /// Requests the provided client size for the window.
-    pub fn setClientSize(self: *Window, width: u32, height: u32) void {
-        var window_width = width;
-        var window_height = height;
-        self.clientToWindowSize(&window_width, &window_height) catch {};
+    pub fn setClientSize(self: *Window, size: zw.Size) void {
+        const SW_RESTORE = win32.ui.windows_and_messaging.SW_RESTORE;
 
-        self.setWindowSize(window_width, window_height);
+        const window_size = self.clientToWindowSize(size) catch size;
+        self.setWindowSize(window_size);
 
         const actual_size = self.getClientRect().size();
-        if (actual_size.width != width or actual_size.height != height) {
+        if (actual_size.width != size.width or actual_size.height != size.height) {
             // We're likely maximized. Let's unmaximize the window.
-            self.showWindow(.{ .SHOWNORMAL = 1, .SHOWNA = 1 });
+            self.showWindow(SW_RESTORE);
         }
     }
 
@@ -586,8 +607,8 @@ pub const Window = struct {
     pub fn setWindowPos(
         self: *Window,
         level: ?zw.Window.Config.Level,
-        position: ?[2]i32,
-        size: ?[2]u32,
+        position: ?zw.Position,
+        size: ?zw.Size,
         activate: bool,
         show: ?bool,
     ) void {
@@ -617,15 +638,15 @@ pub const Window = struct {
         flags.ASYNCWINDOWPOS = 1;
 
         if (position) |pos| {
-            x = pos[0];
-            y = pos[1];
+            x = pos.x;
+            y = pos.y;
         } else {
             flags.NOMOVE = 1;
         }
 
         if (size) |sz| {
-            w = @intCast(sz[0]);
-            h = @intCast(sz[1]);
+            w = @intCast(sz.width);
+            h = @intCast(sz.height);
         } else {
             flags.NOSIZE = 1;
         }
@@ -683,10 +704,8 @@ fn wndProc(
             const init_data: *InitData = @ptrCast(@alignCast(createstruct.lpCreateParams.?));
 
             init_data.window.* = Window{
-                .min_width = init_data.config.min_surface_size.width,
-                .max_width = init_data.config.max_surface_size.width,
-                .min_height = init_data.config.min_surface_size.height,
-                .max_height = init_data.config.max_surface_size.height,
+                .min_surface_size = init_data.config.min_surface_size,
+                .max_surface_size = init_data.config.max_surface_size,
                 .event_loop = init_data.event_loop,
                 .hwnd = hwnd,
             };
@@ -716,10 +735,7 @@ fn wndProc(
 
             // All post-creation initialization should go here.
             if (init_data.config.surface_size) |sz| {
-                window.setClientSize(
-                    std.math.clamp(sz.width, window.min_width, window.max_width),
-                    std.math.clamp(sz.height, window.min_height, window.max_height),
-                );
+                window.setClientSize(sz.clamp(window.min_surface_size, window.max_surface_size));
             }
 
             return DefWindowProcW(hwnd, msg, wparam, lparam);
@@ -781,20 +797,16 @@ fn handleMessage(
 
             const min_max_info: *MINMAXINFO = @ptrFromInt(@as(usize, @bitCast(lparam)));
 
-            var min_width = window.min_width;
-            var max_width = window.max_width;
-            var min_height = window.min_height;
-            var max_height = window.max_height;
-            window.clientToWindowSize(&min_width, &min_height) catch {};
-            window.clientToWindowSize(&max_width, &max_height) catch {};
+            const window_min = window.clientToWindowSize(window.min_surface_size) catch window.min_surface_size;
+            const window_max = window.clientToWindowSize(window.max_surface_size) catch window.max_surface_size;
 
             min_max_info.ptMinTrackSize = .{
-                .x = @intCast(min_width),
-                .y = @intCast(min_height),
+                .x = @intCast(window_min.width),
+                .y = @intCast(window_min.height),
             };
             min_max_info.ptMaxTrackSize = .{
-                .x = @intCast(max_width),
-                .y = @intCast(max_height),
+                .x = @intCast(window_max.width),
+                .y = @intCast(window_max.height),
             };
 
             return 0;

@@ -493,6 +493,14 @@ pub const Window = struct {
         return platform.interface.window.surfaceRect(self);
     }
 
+    /// Returns the current position of the window's surface area over the desktop.
+    ///
+    /// The surface area of a window is the part that can be drawn to, excluding things like the
+    /// title bar and other OS-specific decorations.
+    pub inline fn surfacePosition(self: *Window) Position {
+        return platform.interface.window.surfacePosition(self);
+    }
+
     /// Returns the size of the window's surface area.
     ///
     /// The surface area of a window is the part that can be drawn to, excluding things like the
@@ -516,6 +524,46 @@ pub const Window = struct {
     pub inline fn outerSize(self: *Window) Size {
         return platform.interface.window.outerSize(self);
     }
+
+    /// Returns the outer position of the window.
+    ///
+    /// The outer size corresponds to the complete area of the window, including OS-specific
+    /// decorations like the title bar.
+    pub inline fn outerPosition(self: *Window) Position {
+        return platform.interface.window.outerPosition(self);
+    }
+
+    // =============================================================================================
+    // SETTERS
+    // =============================================================================================
+
+    /// Requests the provided new size for the surface.
+    ///
+    /// On platforms that allow the size of the window to change, this may either take effect
+    /// instantly, or when the request is served by the display server (depending on the
+    /// underlying platform).
+    ///
+    /// On platforms that do not allow the size of the window to change (most mobile platforms),
+    /// this function does nothing.
+    pub inline fn requestSurfaceSize(self: *Window, new_size: Size) void {
+        return platform.interface.window.requestSurfaceSize(self, new_size);
+    }
+
+    /// Sets the minimum surface size of the window.
+    ///
+    /// On platforms that do not support changing the size of the window, this function
+    /// does nothing.
+    pub inline fn setMinSurfaceSize(self: *Window, new_min_size: Size) void {
+        return platform.interface.window.setMinSurfaceSize(self, new_min_size);
+    }
+
+    /// Sets the maximum surface size of the window.
+    ///
+    /// On paltforms that do not support changing the size of the window, this function
+    /// does nothing.
+    pub inline fn setMaxSurfaceSize(self: *Window, new_max_size: Size) void {
+        return platform.interface.window.setMaxSurfaceSize(self, new_max_size);
+    }
 };
 
 /// A size.
@@ -533,6 +581,14 @@ pub const Size = struct {
 
     /// A size of the maximum size.
     pub const max = Size{ .width = std.math.maxInt(u32), .height = std.math.maxInt(u32) };
+
+    /// Clamps te component of the size between `lower` and `upper`.
+    pub fn clamp(self: Size, lower: Size, upper: Size) Size {
+        return Size{
+            .width = std.math.clamp(self.width, lower.width, upper.width),
+            .height = std.math.clamp(self.height, lower.height, upper.height),
+        };
+    }
 };
 
 /// A position.
