@@ -1186,6 +1186,7 @@ pub fn adjustWindowRectEx(
     const AdjustWindowRectEx = win32.ui.windows_and_messaging.AdjustWindowRectEx;
 
     if (AdjustWindowRectEx(rect, styles.style, @intFromBool(has_menu), styles.ex_style) == 0) {
+        @branchHint(.cold);
         log.warn("`AdjustWindowRectEx` failed: {}", .{fmtLastError()});
         return error.PlatformError;
     }
@@ -1200,6 +1201,7 @@ pub fn createWaitableTimer() error{PlatformError}!win32.foundation.HANDLE {
     const ret = CreateWaitableTimerExW(null, null, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, @bitCast(TIMER_ALL_ACCESS));
 
     if (ret == null) {
+        @branchHint(.cold);
         log.err("`CreateWaitableTimerExW` failed: {}", .{fmtLastError()});
         return error.PlatformError;
     }
@@ -1230,6 +1232,7 @@ pub fn setWaitableTimer(timer: win32.foundation.HANDLE, duration: i64) error{Pla
     );
 
     if (ret == 0) {
+        @branchHint(.cold);
         log.err("`SetWaitableTimer` failed: {}", .{fmtLastError()});
         return error.PlatformError;
     }
@@ -1243,6 +1246,7 @@ pub fn closeHandle(handle: win32.foundation.HANDLE) void {
 
     const ret = CloseHandle(handle);
     if (std.debug.runtime_safety and ret == 0) {
+        @branchHint(.cold);
         log.warn("`CloseHandle` failed: {}", .{fmtLastError()});
     }
 }
@@ -1255,6 +1259,7 @@ pub fn createEvent() error{PlatformError}!win32.foundation.HANDLE {
     const ret = CreateEventExW(null, null, .{}, @bitCast(EVENT_ALL_ACCESS));
 
     if (ret == null) {
+        @branchHint(.cold);
         log.err("`CreateEventExW` failed: {}", .{fmtLastError()});
         return error.PlatformError;
     }
@@ -1268,6 +1273,7 @@ pub fn setEvent(event: win32.foundation.HANDLE) void {
 
     const ret = SetEvent(event);
     if (std.debug.runtime_safety and ret == 0) {
+        @branchHint(.cold);
         log.warn("`SetEvent` failed: {}", .{fmtLastError()});
     }
 }
