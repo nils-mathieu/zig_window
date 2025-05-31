@@ -276,6 +276,20 @@ pub const EventLoop = struct {
     pub inline fn exit(self: *EventLoop) void {
         return platform.interface.event_loop.exit(self);
     }
+
+    /// Wakes the event loop thread.
+    ///
+    /// If the message loop is currently waiting for more messages to become available, then
+    /// calling this function will wake it up, causing the `.about_to_wait` event to be
+    /// invoked again.
+    ///
+    /// # Thread Safety
+    ///
+    /// Unlike most methods of `EventLoop`, this method is thread safe. It might be called
+    /// from any thread to wake up the main message loop.
+    pub inline fn wakeUp(self: *EventLoop) void {
+        return platform.interface.event_loop.wakeUp(self);
+    }
 };
 
 /// Represents an open window.

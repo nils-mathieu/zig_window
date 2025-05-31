@@ -53,6 +53,10 @@ pub const interface = struct {
         pub inline fn exit(self: *zw.EventLoop) void {
             self.platform_specific.exiting = true;
         }
+
+        pub fn wakeUp(self: *zw.EventLoop) void {
+            setEvent(self.platform_specific.wake_up_event);
+        }
     };
 
     pub const window = struct {
@@ -212,6 +216,9 @@ pub const EventLoop = struct {
     /// 2. An error occurred while creating the timer.
     high_rez_timer: ?win32.foundation.HANDLE,
 
+    /// An event that will be signaled when the event loop needs to wake up.
+    wake_up_event: win32.foundation.HANDLE,
+
     /// The module handle of the current process.
     hinstance: win32.foundation.HINSTANCE,
 
@@ -245,13 +252,19 @@ pub const EventLoop = struct {
         //
         // See more in `waitForMoreMessages`.
         const high_rez_timer = createWaitableTimer() catch null;
-        errdefer closeHandle(high_rez_timer);
+        errdefer if (high_rez_timer) |h| closeHandle(h);
+
+        // Create the wake-up event which will be used to wake up the message loop thread from
+        // anywhere in the process.
+        const wake_up_event = try createEvent();
+        errdefer closeHandle(wake_up_event);
 
         self.* = EventLoop{
             .allocator = config.allocator,
             .user_app = config.user_app,
             .windows_version = windows_version,
             .high_rez_timer = high_rez_timer,
+            .wake_up_event = wake_up_event,
             .hinstance = hinstance,
         };
     }
@@ -262,6 +275,7 @@ pub const EventLoop = struct {
     pub fn deinit(self: *EventLoop) void {
         unregisterClass(Window.class_name, self.hinstance);
         if (self.high_rez_timer) |h| closeHandle(h);
+        closeHandle(self.wake_up_event);
     }
 
     /// Returns a pointer to the platform agnostic `zw.EventLoop` in which this
@@ -289,9 +303,10 @@ pub const EventLoop = struct {
         const WAIT_FAILED = win32.foundation.WAIT_FAILED;
         const HANDLE = win32.foundation.HANDLE;
 
-        var objects_to_wait_on = std.BoundedArray(HANDLE, 2){};
-
         const infinite_timeout = std.math.maxInt(u64);
+
+        var objects_to_wait_on = std.BoundedArray(HANDLE, 2){};
+        objects_to_wait_on.appendAssumeCapacity(self.wake_up_event);
 
         // Invoke the `.about_to_wait` event and ask the user to provide the timeout that should
         // be used for this wait. Once the event has returned, we can use the new `timeout_ns`
@@ -1229,5 +1244,30 @@ pub fn closeHandle(handle: win32.foundation.HANDLE) void {
     const ret = CloseHandle(handle);
     if (std.debug.runtime_safety and ret == 0) {
         log.warn("`CloseHandle` failed: {}", .{fmtLastError()});
+    }
+}
+
+/// Creates a new event.
+pub fn createEvent() error{PlatformError}!win32.foundation.HANDLE {
+    const CreateEventExW = win32.system.threading.CreateEventExW;
+    const EVENT_ALL_ACCESS = win32.system.threading.EVENT_ALL_ACCESS;
+
+    const ret = CreateEventExW(null, null, .{}, @bitCast(EVENT_ALL_ACCESS));
+
+    if (ret == null) {
+        log.err("`CreateEventExW` failed: {}", .{fmtLastError()});
+        return error.PlatformError;
+    }
+
+    return ret.?;
+}
+
+/// Signals the provided event.
+pub fn setEvent(event: win32.foundation.HANDLE) void {
+    const SetEvent = win32.system.threading.SetEvent;
+
+    const ret = SetEvent(event);
+    if (std.debug.runtime_safety and ret == 0) {
+        log.warn("`SetEvent` failed: {}", .{fmtLastError()});
     }
 }
