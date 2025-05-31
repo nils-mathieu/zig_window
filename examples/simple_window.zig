@@ -11,17 +11,11 @@ const App = struct {
 fn onEvent(app: *App, event_loop: *zw.EventLoop, event: zw.Event) void {
     switch (event) {
         .started => {
-            const window = zw.Window.create(event_loop, .{
-                .title = "test",
-            }) catch err();
+            const window = zw.Window.create(event_loop, .{}) catch @panic("error");
             app.* = App{ .window = window };
         },
-        .stopped => {
-            app.window.destroy();
-        },
-        .close_requested => {
-            event_loop.exit();
-        },
+        .stopped => app.window.destroy(),
+        .close_requested => event_loop.exit(),
         else => {},
     }
 }
@@ -31,13 +25,8 @@ pub fn main() zw.Error!void {
     defer _ = gpa.deinit();
 
     var app: App = undefined;
-
     try zw.run(.{
         .allocator = gpa.allocator(),
         .user_app = .init(App, &app, onEvent),
     });
-}
-
-fn err() noreturn {
-    std.debug.panic("failed to initialize the application", .{});
 }
