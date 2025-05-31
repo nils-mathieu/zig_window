@@ -22,6 +22,7 @@ const std = @import("std");
 /// `.zig` extension).
 const example_names: []const []const u8 = &.{
     "simple_window",
+    "keyboard_events",
 };
 
 pub fn build(b: *std.Build) void {

@@ -241,6 +241,299 @@ pub const Event = union(enum) {
         /// The new height of the window's surface area, measured in physical pixels.
         height: u32,
     },
+
+    /// A keyboard event has been received.
+    keyboard: Keyboard,
+
+    /// A keyboard event.
+    pub const Keyboard = struct {
+        /// The window that received the event.
+        window: *Window,
+        /// The ID of the keyboard device that produced the event.
+        ///
+        /// If `null`, the device could not be determined.
+        device: ?DeviceId,
+
+        /// The physical key-code of the key that produced the event.
+        ///
+        /// Note that this field is not *not* dependent on the user's keyboard layout or input
+        /// locale. Use it when the location of the key is more important than its actual meaning
+        /// to the user.
+        ///
+        /// More information in the documentation for `Key`.
+        key: Key,
+
+        /// The raw scan-code associated with the event.
+        ///
+        /// This scan-code is platform-dependent and cannot be assumed to hold any meaning. They
+        /// might not even be consistent across input devices.
+        ///
+        /// This field is intended to be used when the `Key` enumeration is unable to represent
+        /// the keystroke (see `.unidentified`).
+        scan_code: u32,
+
+        /// The characters associated with the key.
+        ///
+        /// Use this field to determine the logical meaning of the key, taking into account
+        /// eventual modifiers (like CTRL or SHIFT), and the user's keyboard layout and input
+        /// locale.
+        ///
+        /// # Remarks
+        ///
+        /// This field *cannot* be used to determine the text produced by the keystroke. It will
+        /// include any dead-key associated with the key, even if no text has been produced.
+        characters: []const u8,
+
+        /// The characters associated with the key, ignoring all modifiers that might apply.
+        ///
+        /// This field contains the same thing as `characters`, but ignoring modifiers like
+        /// SHIFT or CTRL.
+        ///
+        /// For example, on a standard 101-key US keyboard, pressing SHIFT and A will produce an
+        /// event with:
+        ///
+        /// * `characters`: `"A"`
+        /// * `characters_without_modifiers`: `"a"`
+        characters_without_modifiers: []const u8,
+
+        /// The state transition associated with the event.
+        ///
+        /// This is used to determine if the key was pressed, released, or repeated.
+        state: StateTransition,
+
+        /// The state transition of a keyboard key.
+        pub const StateTransition = enum {
+            /// The key has been pressed, and it was previously released.
+            pressed,
+
+            /// The key has been released, and it was previously pressed.
+            released,
+
+            /// The key has been repeated. This means that the key was already considered pressed,
+            /// but the keyboard sent its code again. This usually happens when the key is held
+            /// down.
+            repeated,
+        };
+    };
+};
+
+/// The ID of an input device.
+pub const DeviceId = *opaque {};
+
+/// Represents a physical key code.
+///
+/// Physical key codes are *not* dependent on the user's keyboard layout and input locale. Use this
+/// type when the physical location of the key matters more than it's actual meaning for the user.
+///
+/// For example, the key `.key_a` is emitted when pressing "A" on a standard 101-key US keyboard,
+/// but also when pressing "Q" on a standard AZERTY keyboard.
+///
+/// The names and meaning of this enumeration are taken from the `code` field of the
+/// `KeyboardEvent` type specified by the W3C.
+///
+/// https://www.w3.org/TR/uievents-code/
+///
+/// You can refer to their specification for more information.
+pub const Key = enum {
+    backquote,
+    backslash,
+    bracket_left,
+    bracket_right,
+    comma,
+    digit0,
+    digit1,
+    digit2,
+    digit3,
+    digit4,
+    digit5,
+    digit6,
+    digit7,
+    digit8,
+    digit9,
+    equal,
+    intl_backslash,
+    intl_ro,
+    intl_yen,
+    key_a,
+    key_b,
+    key_c,
+    key_d,
+    key_e,
+    key_f,
+    key_g,
+    key_h,
+    key_i,
+    key_j,
+    key_k,
+    key_l,
+    key_m,
+    key_n,
+    key_o,
+    key_p,
+    key_q,
+    key_r,
+    key_s,
+    key_t,
+    key_u,
+    key_v,
+    key_w,
+    key_x,
+    key_y,
+    key_z,
+    minus,
+    period,
+    quote,
+    semicolon,
+    slash,
+    alt_left,
+    alt_right,
+    backspace,
+    caps_lock,
+    context_menu,
+    control_left,
+    control_right,
+    enter,
+    meta_left,
+    meta_right,
+    shift_left,
+    shift_right,
+    space,
+    tab,
+    convert,
+    kana_mode,
+    lang1,
+    lang2,
+    lang3,
+    lang4,
+    lang5,
+    non_convert,
+    delete,
+    end,
+    help,
+    home,
+    insert,
+    page_down,
+    page_up,
+    arrow_down,
+    arrow_left,
+    arrow_right,
+    arrow_up,
+    num_lock,
+    numpad0,
+    numpad1,
+    numpad2,
+    numpad3,
+    numpad4,
+    numpad5,
+    numpad6,
+    numpad7,
+    numpad8,
+    numpad9,
+    numpad_add,
+    numpad_backspace,
+    numpad_clear,
+    numpad_clear_entry,
+    numpad_comma,
+    numpad_decimal,
+    numpad_divide,
+    numpad_enter,
+    numpad_equal,
+    numpad_hash,
+    numpad_memory_add,
+    numpad_memory_clear,
+    numpad_memory_recall,
+    numpad_memory_store,
+    numpad_memory_subtract,
+    numpad_multiply,
+    numpad_paren_left,
+    numpad_paren_right,
+    numpad_star,
+    numpad_subtract,
+    escape,
+    f1,
+    f2,
+    f3,
+    f4,
+    f5,
+    f6,
+    f7,
+    f8,
+    f9,
+    f10,
+    f11,
+    f12,
+    f13,
+    f14,
+    f15,
+    f16,
+    f17,
+    f18,
+    f19,
+    f20,
+    f21,
+    f22,
+    f23,
+    f24,
+    f25,
+    f26,
+    f27,
+    f28,
+    f29,
+    f30,
+    f31,
+    f32,
+    @"fn",
+    fn_lock,
+    print_screen,
+    scroll_lock,
+    pause,
+    browser_back,
+    browser_favorites,
+    browser_forward,
+    browser_home,
+    browser_refresh,
+    browser_search,
+    browser_stop,
+    eject,
+    launch_app1,
+    launch_app2,
+    launch_mail,
+    media_play_pause,
+    media_select,
+    media_stop,
+    media_track_next,
+    media_track_previous,
+    power,
+    sleep,
+    audio_volume_down,
+    audio_volume_mute,
+    audio_volume_up,
+    wake_up,
+    hyper,
+    super,
+    turbo,
+    abort,
+    @"resume",
+    @"suspend",
+    again,
+    copy,
+    cut,
+    find,
+    open,
+    paste,
+    props,
+    select,
+    undo,
+    hiragana,
+    katakana,
+
+    /// The key could not be identified to any tag of the `Key` enum.
+    ///
+    /// Consider using the `scan_code` field of the `Event.Keyboard` to represent this key.
+    /// Alternatively, you can submit an issue at:
+    ///
+    ///     https://github.com/nils-mathieu/zig_window
+    unidentified,
 };
 
 /// Contains the global state of the event loop while it is executing.
