@@ -214,7 +214,32 @@ pub const Event = union(enum) {
         ///
         /// In other words, every time `about_to_wait` is called, one must write the timeout
         /// value again.
-        timeout_ns: u64,
+        timeout_ns: *u64,
+    },
+
+    /// A window has been requested to close by the user.
+    ///
+    /// Note that the application is free to choose what to do as a result of this event. They may
+    /// choose to show an error message asking the user to save their work, or they may close
+    /// the window by calling `Window.close()`, or they may completely stop the event loop by
+    /// calling `EventLoop.exit()`.
+    close_requested: struct {
+        /// The window that has been requested to close.
+        window: *Window,
+    },
+
+    /// The size of a window's surface has changed.
+    ///
+    /// Note that this corrsepond to the window's "surface" area (as opposed to the outer window
+    /// size which includes its title bar and other OS-specific decorations).
+    surface_resized: struct {
+        /// The window whose size has changed.
+        window: *Window,
+
+        /// The new width of the window's surface area, measured in physical pixels.
+        width: u32,
+        /// The new height of the window's surface area, measured in physical pixels.
+        height: u32,
     },
 };
 
@@ -238,7 +263,313 @@ pub const EventLoop = struct {
     /// # Thread Safety
     ///
     /// This function is thread safe. You can call it from any thread without fear.
-    pub inline fn allocate(self: *EventLoop) std.mem.Allocator {
+    pub inline fn allocator(self: *EventLoop) std.mem.Allocator {
         return platform.interface.event_loop.allocator(self);
+    }
+
+    /// Request the event loop to exit.
+    ///
+    /// # Remarks
+    ///
+    /// This function will not cause the event loop to exit *instantly*. Instead, it is still
+    /// possible for events to be received.
+    pub inline fn exit(self: *EventLoop) void {
+        return platform.interface.event_loop.exit(self);
+    }
+};
+
+/// Represents an open window.
+pub const Window = struct {
+    /// The platform-specific object backing this `Window`.
+    ///
+    /// You can access this field if you need to access any of the underlying object's state,
+    /// but make sure to gate this access behind the appropriate compile-time checks.
+    platform_specific: platform.interface.Window,
+
+    /// Represents the configuration of a window.
+    ///
+    /// An instance of this type is passed to the `Window.create()` function in order to
+    /// dictate how to create the window.
+    ///
+    /// This includes things like appearance, behavior, and other platform-specific window-related
+    /// flags.
+    pub const Config = struct {
+        /// The initial size of the window's surface.
+        ///
+        /// The "surface" of a window corresponds to the window's drawable area, excluding eventual
+        /// platform-specific decorations such as the title bar or the border.
+        ///
+        /// When not present, a default, platform-specific size is used instead.
+        ///
+        /// This size can be either logical or physical, meaning that you can choose when you
+        /// want your value to take the window's scale factor into account when computing the
+        /// size.
+        ///
+        /// # Modifying the value
+        ///
+        /// Once the window has been created, you can modify the window's size using the
+        /// `Window.requestSurfaceSize()` method.
+        ///
+        /// # Platform-specifics
+        ///
+        /// If the provided size is not supported, the closest supported size is used instead.
+        surface_size: ?Size = null,
+
+        /// The minimum size of the window's surface.
+        ///
+        /// The "surface" of a window corresponds to the window's drawable area, excluding eventual
+        /// platform-specific decorations such as the title bar or the border.
+        ///
+        /// # Modifying the value
+        ///
+        /// Once the window has been created, you can modify the window's minimum size using the
+        /// `Window.setMinSurfaceSize()` method.
+        ///
+        /// # Platform-specifics
+        ///
+        /// If the provided size is not supported, the closest supported size is used instead.
+        min_surface_size: Size = .zero,
+
+        /// The maximum size of the window's surface.
+        ///
+        /// The "surface" of a window corresponds to the window's drawable area, excluding eventual
+        /// platform-specific decorations such as the title bar or the border.
+        ///
+        /// # Modifying the value
+        ///
+        /// Once the window has been created, you can modify the window's maximum size using the
+        /// `Window.setMaxSurfaceSize()` method.
+        ///
+        /// # Platform-specifics
+        ///
+        /// If the provided size is not supported, the closest supported size is used instead.
+        max_surface_size: Size = .max,
+
+        /// The initial "outer" position of the window.
+        ///
+        /// The outer position corresponds to the window's position, *including* the window's
+        /// platform-specific decorations like the title bar and border
+        ///
+        /// # Modifying the value
+        ///
+        /// Once the window has been created, you can modify the window's position using the
+        /// `Window.setPosition()` method..
+        position: ?Position = null,
+
+        /// Whether the user should be able to manually resize the window (for example by resizing
+        /// its borders).
+        ///
+        /// # Modifying the value
+        ///
+        /// Once the window has been created, you can modify whether users can resize the window
+        /// using the `Window.setResizable()`.
+        resizable: bool = true,
+
+        /// Whether the window should have the platform's default decorations (like a title bar
+        /// and a border).
+        ///
+        /// # Modifying the value
+        ///
+        /// Once the window has been created, you can modify whether the window has decorations
+        /// using the `Window.setDecorations()` function.
+        decorations: bool = true,
+
+        /// The title of the window.
+        ///
+        /// This field must contain a valid UTF-8 string.
+        ///
+        /// # Modifying the value
+        ///
+        /// Once the window has been created, you can modify the title of the window using the
+        /// `Window.setTitle()` method.
+        title: []const u8 = "Zig Window",
+
+        /// Whether the window should initially be maximized.
+        ///
+        /// # Modifying the value
+        ///
+        /// Once the window has been created, you can use the `Window.setMaximized()` function
+        /// to update whether the window is maximized or not.
+        maximized: bool = false,
+
+        /// Whether the window should initially be minimized.
+        ///
+        /// # Modifying the value
+        ///
+        /// Once the window has been created, you can use the `Window.setMinimized()` function
+        /// to update whether the window is minimized or not.
+        minimized: bool = false,
+
+        /// Whether the window should be initially visible.
+        ///
+        /// # Modifying the value
+        ///
+        /// Once the window has been created, you can modify whether the window is visible or not
+        /// using the `Window.setVisible()`.
+        visible: bool = true,
+
+        /// The "level" of the window.
+        ///
+        /// This determines whether the window should always appear on top or behind other
+        /// windows.
+        ///
+        /// # Modifying the value
+        ///
+        /// Once the window has been created, you can modify the window level by calling the
+        /// `Window.setLevel()` method.
+        level: Level = .normal,
+
+        /// Whether the content of the window should be protected from things like screen sharing
+        /// and similar mechanisms.
+        ///
+        /// # Modifying the value
+        ///
+        /// Once the window has been created, you can modify whether the window's content is
+        /// protected using `Window.setContentProtected()`.
+        content_protected: bool = false,
+
+        /// Whether the window should support transparent (values with an alpha channel different
+        /// from 1.0) rendering.
+        ///
+        /// When `false`, the alpha channel of anything rendered to the window will be ignored and
+        /// the window will be assumed to be completely opaque.
+        ///
+        /// # Modiftying the value
+        ///
+        /// Once the window has been created, you can modify whethr the window supports transparent
+        /// rendering using `Window.setTransparent()`.
+        ///
+        /// # Notes
+        ///
+        /// Disabled transparent rendering allows the window manager and operating system to be
+        /// able to assume anything under the window is not visible, and therefore does not need
+        /// to be rendered.
+        ///
+        /// This allows some optimizations for things like video players which can skip decoding
+        /// the video entirely if they know not to be in view.
+        transparent: bool = false,
+
+        /// Whether the window should take the focus automatically when it is opened.
+        auto_focus: bool = true,
+
+        /// The level of a window.
+        pub const Level = enum {
+            /// The window should always appear behind other windows.
+            always_on_bottom,
+            /// The window should behave normally.
+            normal,
+            /// The window should always appear on top of other windows.
+            always_on_top,
+        };
+    };
+
+    /// Creates a new window on the provided event loop.
+    ///
+    /// # Valid Usage
+    ///
+    /// The created window must outlive the event loop.
+    pub inline fn create(el: *EventLoop, config: Config) Error!*Window {
+        return platform.interface.window.create(el, config);
+    }
+
+    /// Closes the window and releases any resources that it owns.
+    ///
+    /// # Valid Usage
+    ///
+    /// After this function has returned, the window must no longer be used.
+    pub inline fn destroy(self: *Window) void {
+        return platform.interface.window.destroy(self);
+    }
+
+    // =============================================================================================
+    // GETTERS
+    // =============================================================================================
+
+    /// Returns the rectangle of the window's surface area.
+    ///
+    /// The surface area of a window is the part that can be drawn to, excluding things like the
+    /// title bar and other OS-specific decorations.
+    pub inline fn surfaceRect(self: *Window) Rect {
+        return platform.interface.window.surfaceRect(self);
+    }
+
+    /// Returns the size of the window's surface area.
+    ///
+    /// The surface area of a window is the part that can be drawn to, excluding things like the
+    /// title bar and other OS-specific decorations.
+    pub inline fn surfaceSize(self: *Window) Size {
+        return platform.interface.window.surfaceSize(self);
+    }
+
+    /// Returns a rectangle over the window's outer area.
+    ///
+    /// The outer area corresponds to the complete size of the window, including OS-specific
+    /// decorations like the title bar.
+    pub inline fn outerRect(self: *Window) Rect {
+        return platform.interface.window.outerRect(self);
+    }
+
+    /// Returns the "outer" size of the window.
+    ///
+    /// The outer size corresponds to the complete area of the window, including OS-specific
+    /// decorations like the title bar.
+    pub inline fn outerSize(self: *Window) Size {
+        return platform.interface.window.outerSize(self);
+    }
+};
+
+/// A size.
+///
+/// The components of this struct are measured in *physical pixels*, meaning that they do not
+/// take DPI scaling into account and measure an exact amount of pixels on the screen.
+pub const Size = struct {
+    /// The width.
+    width: u32,
+    /// The height.
+    height: u32,
+
+    /// A size of zero.
+    pub const zero = Size{ .width = 0, .height = 0 };
+
+    /// A size of the maximum size.
+    pub const max = Size{ .width = std.math.maxInt(u32), .height = std.math.maxInt(u32) };
+};
+
+/// A position.
+///
+/// The components in this struct are measured in *physical pixels*, meaning that they do not
+/// take DPI scaling into account and measure an exact amount of pixels on the screen.
+pub const Position = struct {
+    /// The horizontal component.
+    x: i32,
+    /// The vertical component.
+    y: i32,
+
+    /// The origin.
+    pub const origin = Position{ .x = 0, .y = 0 };
+};
+
+/// Represents a rectangle.
+///
+/// The components in this struct are measured in *physical pixels*, meaning that they do not
+/// take DPI scaling into account and measure an exact amount of pixels on the screen.
+pub const Rect = struct {
+    /// The X position of the top-left corner of the rectangle.
+    x: i32,
+    /// The Y position of the top-left corner of the rectangle.
+    y: i32,
+    /// The width of the rectangle.
+    width: u32,
+    /// The height of the rectangle.
+    height: u32,
+
+    /// Returns the size of the rectangle.
+    pub inline fn size(self: Rect) Size {
+        return Size{ .width = self.width, .height = self.height };
+    }
+
+    /// Returns the position of the rectangle's top-left corner.
+    pub inline fn position(self: Rect) Position {
+        return Position{ .x = self.x, .y = self.y };
     }
 };

@@ -25,30 +25,39 @@ const example_names: []const []const u8 = &.{
 };
 
 pub fn build(b: *std.Build) void {
-    // =================
-    // = Build options =
-    // =================
+    // =============================================================================================
+    // = Build options                                                                             =
+    // =============================================================================================
     const target = b.standardTargetOptions(.{});
 
-    // ================
-    // = Global steps =
-    // ================
+    // =============================================================================================
+    // = Global steps                                                                              =
+    // =============================================================================================
     const check_step = b.step("check", "Used by LSPs to cover the codebase");
     const examples_step = b.step("examples", "Installs examples in the `zig-out` directory");
 
-    // ============================
-    // = Main `zig_window` module =
-    // ============================
+    // =============================================================================================
+    // = Main `zig_window` module                                                                  =
+    // =============================================================================================
     const zig_window_module = b.addModule("zig_window", .{
         .root_source_file = b.path("src/root.zig"),
+        .target = target,
     });
     zig_window_module.addImport("zig_window", zig_window_module);
 
-    // ============
-    // = Examples =
-    // ============
-    //
-    // Following code simply creates a step named `example_{name}` for every
+    switch (target.result.os.tag) {
+        .windows => {
+            if (b.lazyDependency("zigwin32", .{})) |zigwin32| {
+                zig_window_module.addImport("win32", zigwin32.module("win32"));
+            }
+        },
+        else => {},
+    }
+
+    // =============================================================================================
+    // = Examples                                                                                  =
+    // =============================================================================================
+    // The following code simply creates a step named `example_{name}` for every
     // example listed in the `example_names` above.
     //
     for (example_names) |name| {
