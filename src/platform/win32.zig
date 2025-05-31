@@ -202,6 +202,16 @@ pub const EventLoop = struct {
     /// The current version of Windows we are running on.
     windows_version: OsVersion,
 
+    /// The handle to a high-resolution waitable timer.
+    ///
+    /// This handle may be null if:
+    ///
+    /// 1. High-resolution timers are not supported on the current operation system (which happens
+    ///    if we are running on older version of Windows).
+    ///
+    /// 2. An error occurred while creating the timer.
+    high_rez_timer: ?win32.foundation.HANDLE,
+
     /// The module handle of the current process.
     hinstance: win32.foundation.HINSTANCE,
 
@@ -226,10 +236,22 @@ pub const EventLoop = struct {
         try registerClass(Window.class_name, hinstance, &wndProc);
         errdefer unregisterClass(Window.class_name, hinstance);
 
+        // Create a high-resolution timer which will be used when handling time-outs (when waiting
+        // for messages).
+        //
+        // This operation is actually allowed to fail because we have a fallback mechanism in case
+        // we can't use a high-resolution timer. The issue is that that fallback mechanism is
+        // ~10000 less precise because it has only millisecond granularity.
+        //
+        // See more in `waitForMoreMessages`.
+        const high_rez_timer = createWaitableTimer() catch null;
+        errdefer closeHandle(high_rez_timer);
+
         self.* = EventLoop{
             .allocator = config.allocator,
             .user_app = config.user_app,
             .windows_version = windows_version,
+            .high_rez_timer = high_rez_timer,
             .hinstance = hinstance,
         };
     }
@@ -239,6 +261,7 @@ pub const EventLoop = struct {
     /// **Note:** this function does *not* free the pointer.
     pub fn deinit(self: *EventLoop) void {
         unregisterClass(Window.class_name, self.hinstance);
+        if (self.high_rez_timer) |h| closeHandle(h);
     }
 
     /// Returns a pointer to the platform agnostic `zw.EventLoop` in which this
@@ -264,6 +287,9 @@ pub const EventLoop = struct {
         const QS_ALLINPUT = win32.ui.windows_and_messaging.QS_ALLINPUT;
         const MWMO_INPUTAVAILABLE = win32.ui.windows_and_messaging.MWMO_INPUTAVAILABLE;
         const WAIT_FAILED = win32.foundation.WAIT_FAILED;
+        const HANDLE = win32.foundation.HANDLE;
+
+        var objects_to_wait_on = std.BoundedArray(HANDLE, 2){};
 
         const infinite_timeout = std.math.maxInt(u64);
 
@@ -274,14 +300,51 @@ pub const EventLoop = struct {
         self.sendEvent(.{ .about_to_wait = .{ .timeout_ns = &timeout_ns } });
 
         // NOTE:
+        //  There's two ways for this function to wait for the requested time-out.
+        //
+        //  1. We can use the regular `timeout` parameter of `MsgWaitForMultipleObjectsEx`
+        //     function. The issue with that method is that the granularity is only a millisecond.
+        //
+        //  2. When the `high_rez_timer` handle is non-null, we can use the timer. That method
+        //     has a 100 nanosecond granularity, which is way better.
+        //
+        //  In consequence, if the high resolution timer is present, and that the operation that
+        //  sets it up here do not fail, then we use it. Otherwise, we fall back to using the
+        //  timeout parameter.
+        var use_timeout_parameter = true;
+        var timeout_parameter_value: u32 = std.math.maxInt(u32);
+
+        if (timeout_ns != infinite_timeout) {
+            if (self.high_rez_timer) |high_rez_timer| {
+                const duration_100ns = timeout_ns / 100;
+                const set_timer_value =
+                    if (duration_100ns >= -std.math.minInt(i64))
+                        std.math.minInt(i64)
+                    else
+                        -@as(i64, @intCast(duration_100ns));
+
+                if (setWaitableTimer(high_rez_timer, set_timer_value)) {
+                    use_timeout_parameter = false;
+                    objects_to_wait_on.appendAssumeCapacity(high_rez_timer);
+                } else |_| {}
+            }
+
+            if (use_timeout_parameter) {
+                // We were not able to set up the high resolution timer. We need to use the
+                // fallback method of using the timeout parameter.
+                timeout_parameter_value = std.math.lossyCast(u32, timeout_ns / std.time.ns_per_ms);
+            }
+        }
+
+        // NOTE:
         //  `QS_ALLINPUT` and `MWMO_INPUTAVAILABLE` ensure that the function will wake up the
         //  thread when new messages are available in the message queue. Those messages will
         //  not be removed from the queue and we still need to invoke `PeekMessageW` a bunch of
         //  times to handle the events.
         const ret = MsgWaitForMultipleObjectsEx(
-            0,
-            null,
-            std.math.lossyCast(u32, timeout_ns / std.time.ns_per_ms),
+            @intCast(objects_to_wait_on.slice().len),
+            objects_to_wait_on.slice().ptr,
+            timeout_parameter_value,
             QS_ALLINPUT,
             MWMO_INPUTAVAILABLE,
         );
@@ -1110,5 +1173,61 @@ pub fn adjustWindowRectEx(
     if (AdjustWindowRectEx(rect, styles.style, @intFromBool(has_menu), styles.ex_style) == 0) {
         log.warn("`AdjustWindowRectEx` failed: {}", .{fmtLastError()});
         return error.PlatformError;
+    }
+}
+
+/// Creates a new high-resolution waitable timer.
+pub fn createWaitableTimer() error{PlatformError}!win32.foundation.HANDLE {
+    const CreateWaitableTimerExW = win32.system.threading.CreateWaitableTimerExW;
+    const CREATE_WAITABLE_TIMER_HIGH_RESOLUTION = win32.system.threading.CREATE_WAITABLE_TIMER_HIGH_RESOLUTION;
+    const TIMER_ALL_ACCESS = win32.system.threading.TIMER_ALL_ACCESS;
+
+    const ret = CreateWaitableTimerExW(null, null, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, @bitCast(TIMER_ALL_ACCESS));
+
+    if (ret == null) {
+        log.err("`CreateWaitableTimerExW` failed: {}", .{fmtLastError()});
+        return error.PlatformError;
+    }
+
+    return ret.?;
+}
+
+/// Configures a waitable timer to use the provided value.
+///
+/// # Remarks
+///
+/// Positive durations mean that the timer uses an absolute number of 100-nanoseconds since
+/// 1970-01-01.
+///
+/// Negative durations mean that the duration is relative to the time of calling the function,
+/// also measured in 100-nanoseconds.
+pub fn setWaitableTimer(timer: win32.foundation.HANDLE, duration: i64) error{PlatformError}!void {
+    const SetWaitableTimer = win32.system.threading.SetWaitableTimer;
+    const LARGE_INTEGER = win32.foundation.LARGE_INTEGER;
+
+    const ret = SetWaitableTimer(
+        timer,
+        &LARGE_INTEGER{ .QuadPart = duration },
+        0,
+        null,
+        null,
+        0,
+    );
+
+    if (ret == 0) {
+        log.err("`SetWaitableTimer` failed: {}", .{fmtLastError()});
+        return error.PlatformError;
+    }
+}
+
+/// Closes the provided handle.
+///
+/// Prints an error message if the operation fail when runtime safety is on.
+pub fn closeHandle(handle: win32.foundation.HANDLE) void {
+    const CloseHandle = win32.foundation.CloseHandle;
+
+    const ret = CloseHandle(handle);
+    if (std.debug.runtime_safety and ret == 0) {
+        log.warn("`CloseHandle` failed: {}", .{fmtLastError()});
     }
 }
