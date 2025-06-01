@@ -538,6 +538,11 @@ pub const Window = struct {
     /// A temporary buffer that will be used when converting UTF-16 data to UTF-8.
     utf8_buf: std.ArrayListUnmanaged(u8) = .empty,
 
+    /// The last reported mouse position over the window.
+    current_mouse_position: zw.Position = .invalid,
+    /// Whether the mouse is currently in the window.
+    is_mouse_hover: bool = false,
+
     /// The name of the window class used when creating windows.
     pub const class_name = std.unicode.utf8ToUtf16LeStringLiteral("zig_window_class_name");
 
@@ -1105,6 +1110,8 @@ fn handleMessage(
     const WM_DEADCHAR = win32.ui.windows_and_messaging.WM_DEADCHAR;
     const WM_SYSCHAR = win32.ui.windows_and_messaging.WM_SYSCHAR;
     const WM_SYSDEADCHAR = win32.ui.windows_and_messaging.WM_SYSDEADCHAR;
+    const WM_MOUSEMOVE = win32.ui.windows_and_messaging.WM_MOUSEMOVE;
+    const WM_MOUSELEAVE = 0x02A3;
 
     switch (msg) {
 
@@ -1206,6 +1213,52 @@ fn handleMessage(
                 .state = state,
                 .virtual_key_code = virtual_key_code,
             };
+
+            return 0;
+        },
+
+        // https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-mousemove
+        WM_MOUSEMOVE => {
+            const TME_LEAVE = win32.ui.input.keyboard_and_mouse.TME_LEAVE;
+
+            const x = @as(i16, @bitCast(@as(u16, @truncate(@as(usize, @bitCast(lparam))))));
+            const y = @as(i16, @bitCast(@as(u16, @truncate(@as(usize, @bitCast(lparam)) >> 16))));
+
+            window.current_mouse_position = .{ .x = x, .y = y };
+
+            if (!window.is_mouse_hover) {
+                window.is_mouse_hover = true;
+
+                window.event_loop.sendEvent(.{ .pointer_entered = .{
+                    .window = window.toPlatformAgnostic(),
+                    .device = null,
+                    .x = x,
+                    .y = y,
+                } });
+
+                trackMouseEvent(window.hwnd, TME_LEAVE);
+            }
+
+            window.event_loop.sendEvent(.{ .pointer_moved = .{
+                .window = window.toPlatformAgnostic(),
+                .device = null,
+                .x = x,
+                .y = y,
+            } });
+
+            return 0;
+        },
+
+        // https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-mouseleave
+        WM_MOUSELEAVE => {
+            window.is_mouse_hover = false;
+
+            window.event_loop.sendEvent(.{ .pointer_left = .{
+                .window = window.toPlatformAgnostic(),
+                .device = null,
+                .x = window.current_mouse_position.x,
+                .y = window.current_mouse_position.y,
+            } });
 
             return 0;
         },
@@ -1886,4 +1939,25 @@ fn resolveCharacter(
     }
 
     return &.{};
+}
+
+/// Invokes the `TrackMouseEvent` function.
+///
+/// Logs errors if they happen.
+fn trackMouseEvent(hwnd: win32.foundation.HWND, flags: win32.ui.input.keyboard_and_mouse.TRACKMOUSEEVENT_FLAGS) void {
+    const TrackMouseEvent = win32.ui.input.keyboard_and_mouse.TrackMouseEvent;
+    const TRACKMOUSEEVENT = win32.ui.input.keyboard_and_mouse.TRACKMOUSEEVENT;
+
+    var arg = TRACKMOUSEEVENT{
+        .cbSize = @sizeOf(TRACKMOUSEEVENT),
+        .dwFlags = flags,
+        .hwndTrack = hwnd,
+        .dwHoverTime = 0,
+    };
+
+    const ret = TrackMouseEvent(&arg);
+
+    if (std.debug.runtime_safety and ret == 0) {
+        log.warn("`TrackMouseEvent` failed: {}", .{fmtLastError()});
+    }
 }

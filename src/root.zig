@@ -248,6 +248,57 @@ pub const Event = union(enum) {
     /// Some text was typed.
     text_typed: TextTyped,
 
+    /// Indicates that a pointing device has moved over a window.
+    pointer_moved: struct {
+        /// The window that received the event.
+        window: *Window,
+        /// The ID of the keyboard device that produced the event.
+        ///
+        /// If `null`, the device could not be determined.
+        device: ?DeviceId,
+
+        /// The X position of the pointing device, relative to the top-left corner of the
+        /// window's surface area.
+        x: i32,
+        /// The Y position of the pointing device, relative to the top-left corner of the
+        /// window's surface area.
+        y: i32,
+    },
+
+    /// Indicates that a pointing device has entered a window's surface area.
+    pointer_entered: struct {
+        /// The window that received the event.
+        window: *Window,
+        /// The ID of the keyboard device that produced the event.
+        ///
+        /// If `null`, the device could not be determined.
+        device: ?DeviceId,
+
+        /// The X position of the pointing device, relative to the top-left corner of the
+        /// window's surface area.
+        x: i32,
+        /// The Y position of the pointing device, relative to the top-left corner of the
+        /// window's surface area.
+        y: i32,
+    },
+
+    /// Indicates that a pointing device has left a window's surface area.
+    pointer_left: struct {
+        /// The window that received the event.
+        window: *Window,
+        /// The ID of the keyboard device that produced the event.
+        ///
+        /// If `null`, the device could not be determined.
+        device: ?DeviceId,
+
+        /// The X position of the pointing device, relative to the top-left corner of the
+        /// window's surface area.
+        x: i32,
+        /// The Y position of the pointing device, relative to the top-left corner of the
+        /// window's surface area.
+        y: i32,
+    },
+
     /// A keyboard event.
     pub const Keyboard = struct {
         /// The window that received the event.
@@ -968,6 +1019,9 @@ pub const Position = struct {
 
     /// The origin.
     pub const origin = Position{ .x = 0, .y = 0 };
+
+    /// A likely invalid position.
+    pub const invalid = Position{ .x = std.math.minInt(i32), .y = std.math.minInt(i32) };
 };
 
 /// Represents a rectangle.
