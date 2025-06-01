@@ -245,6 +245,9 @@ pub const Event = union(enum) {
     /// A keyboard event has been received.
     keyboard: Keyboard,
 
+    /// Some text was typed.
+    text_typed: TextTyped,
+
     /// A keyboard event.
     pub const Keyboard = struct {
         /// The window that received the event.
@@ -314,6 +317,61 @@ pub const Event = union(enum) {
             /// down.
             repeated,
         };
+    };
+
+    /// A text event.
+    ///
+    /// See `.text_typed` for more information.
+    pub const TextTyped = struct {
+        /// The window that received the event.
+        window: *Window,
+        /// The ID of the keyboard device that produced the event.
+        ///
+        /// If `null`, the device could not be determined.
+        device: ?DeviceId,
+
+        /// The IME event that occured.
+        ime: ImeEvent,
+    };
+
+    /// The state of an IME event sent to through a `.text_typed` event.
+    pub const ImeEvent = union(enum) {
+        /// IME was just enabled.
+        enabled,
+
+        /// IME was just disabled.
+        disabled,
+
+        /// Some text was commited.
+        ///
+        /// If you only care about the typed text, you can just check this variant.
+        ///
+        /// # Remarks
+        ///
+        /// It's possible (and expected) to get `commit` and `preedit` events when IMEs are
+        /// disabled (when no `.enabled` or `.disabled` events have been received).
+        ///
+        /// This happens when input is received while IMEs have not been enabled manually
+        /// by the application.
+        commit: []const u8,
+
+        /// Some text is being pre-edited.
+        ///
+        /// Those events don't indicate actual textual content written, but an indication of
+        /// what is going to be commited.
+        preedit: struct {
+            /// The pre-edited text.
+            text: []const u8,
+
+            /// The start of the current cursor position.
+            ///
+            /// There is always: `0 <= cursor_start <= cursor_end <= text.len`.
+            cursor_start: usize,
+            /// The end of the current cursor position.
+            ///
+            /// There is always: `0 <= cursor_start <= cursor_end <= text.len`.
+            cursor_end: usize,
+        },
     };
 };
 

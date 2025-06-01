@@ -23,6 +23,7 @@ const std = @import("std");
 const example_names: []const []const u8 = &.{
     "simple_window",
     "keyboard_events",
+    "typed_text",
 };
 
 pub fn build(b: *std.Build) void {

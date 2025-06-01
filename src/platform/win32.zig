@@ -880,6 +880,10 @@ pub const Window = struct {
 
         const typed_characters = self.decodeUtf16(self.typed_utf16_chars.items);
 
+        // =========================================================================================
+        // Keyboard events
+        // =========================================================================================
+
         if (self.last_keyboard_event) |last_ev| {
             var keyboard_state: [256]KeyState8 = undefined;
 
@@ -933,6 +937,34 @@ pub const Window = struct {
                 .characters = characters,
                 .characters_without_modifiers = characters_ignoring_modifiers,
             } });
+        }
+
+        // =========================================================================================
+        // Text typed events
+        // =========================================================================================
+
+        if (typed_characters.len > 0) {
+            if (self.in_dead_char_sequence) {
+                self.event_loop.sendEvent(.{
+                    .text_typed = .{
+                        .window = self.toPlatformAgnostic(),
+                        .device = null,
+                        .ime = .{ .preedit = .{
+                            .text = typed_characters,
+                            .cursor_start = 0,
+                            .cursor_end = typed_characters.len,
+                        } },
+                    },
+                });
+            } else {
+                self.event_loop.sendEvent(.{
+                    .text_typed = .{
+                        .window = self.toPlatformAgnostic(),
+                        .device = null,
+                        .ime = .{ .commit = typed_characters },
+                    },
+                });
+            }
         }
     }
 
@@ -1747,7 +1779,7 @@ fn toUnicode(
     const ToUnicode = win32.ui.input.keyboard_and_mouse.ToUnicode;
 
     var flags: u32 = 0;
-    if (dont_modify_keyboard_state) flags |= 1 << 1;
+    if (dont_modify_keyboard_state) flags |= 1 << 2;
 
     var buf_utf16: [8]u16 = undefined;
     const ret = ToUnicode(
