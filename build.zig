@@ -47,14 +47,37 @@ pub fn build(b: *std.Build) void {
     });
     zig_window_module.addImport("zig_window", zig_window_module);
 
+    var current_platform: []const u8 = &.{};
+
     switch (target.result.os.tag) {
         .windows => {
             if (b.lazyDependency("zigwin32", .{})) |zigwin32| {
                 zig_window_module.addImport("win32", zigwin32.module("win32"));
             }
+
+            current_platform = "win32";
         },
         else => {},
     }
+
+    if (current_platform.len == 0) {
+        const err =
+            \\The target platform "{s}" is not supported by the `zig_window` library.
+            \\
+            \\Consider filing an issue at:
+            \\    https://github.com/nils-mathieu/zig_window
+            \\
+            \\Alternatively, you can compile the library with the `.{{ .use_dummy_platform = true }}`
+            \\and you will be provided with a working event loop but no windowing-related features.
+            \\
+        ;
+
+        std.debug.panic(err, .{@tagName(target.result.os.tag)});
+    }
+
+    const zig_module_opts = b.addOptions();
+    zig_module_opts.addOption([]const u8, "current_platform", current_platform);
+    zig_window_module.addOptions("build_options", zig_module_opts);
 
     // =============================================================================================
     // = Examples                                                                                  =

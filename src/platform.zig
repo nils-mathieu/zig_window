@@ -7,22 +7,8 @@
 //!    on all platforms.
 
 const builtin = @import("builtin");
+const build_options = @import("build_options");
 
 pub const win32 = @import("platform/win32.zig");
 
-pub const interface = switch (builtin.os.tag) {
-    .windows => win32.interface,
-    else => {
-        const err =
-            \\The current platform "{}" is not supported by the `zig_window` library.
-            \\
-            \\Consider filing an issue at:
-            \\    https://github.com/nils-mathieu/zig_window
-            \\
-            \\Alternatively, you can compile the library with the `.{ .use_dummy_platform = true }`
-            \\and you will be provided with a working event loop but no windowing-related features.
-            \\
-        ;
-        @compileError(err);
-    },
-};
+pub const interface = @field(@This(), build_options.current_platform).interface;
