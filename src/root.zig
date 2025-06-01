@@ -242,6 +242,14 @@ pub const Event = union(enum) {
         height: u32,
     },
 
+    /// A window's keyboard focus state has changed.
+    focus_changed: struct {
+        /// The window whose focus state has changed.
+        window: *Window,
+        /// Whether the window is now in focus.
+        focused: bool,
+    },
+
     /// A keyboard event has been received.
     keyboard: Keyboard,
 

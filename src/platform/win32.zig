@@ -47,7 +47,7 @@ pub const interface = struct {
 
     pub const event_loop = struct {
         pub inline fn allocator(self: *zw.EventLoop) std.mem.Allocator {
-            return self.allocator;
+            return self.platform_specific.allocator;
         }
 
         pub inline fn exit(self: *zw.EventLoop) void {
@@ -1082,8 +1082,12 @@ fn wndProc(
                 // of to initialize the window. Just call the default window procedure.
                 return DefWindowProcW(hwnd, msg, wparam, lparam);
             } else {
+                const window: *Window = @ptrFromInt(userdata);
+
+                std.debug.assert(window.hwnd == hwnd);
+
                 // The window is initialized. We're receiving regular events for the window.
-                return handleMessage(@ptrFromInt(userdata), msg, wparam, lparam);
+                return handleMessage(window, msg, wparam, lparam);
             }
         },
     }
@@ -1112,6 +1116,8 @@ fn handleMessage(
     const WM_SYSDEADCHAR = win32.ui.windows_and_messaging.WM_SYSDEADCHAR;
     const WM_MOUSEMOVE = win32.ui.windows_and_messaging.WM_MOUSEMOVE;
     const WM_MOUSELEAVE = 0x02A3;
+    const WM_SETFOCUS = win32.ui.windows_and_messaging.WM_SETFOCUS;
+    const WM_KILLFOCUS = win32.ui.windows_and_messaging.WM_KILLFOCUS;
 
     switch (msg) {
 
@@ -1258,6 +1264,26 @@ fn handleMessage(
                 .device = null,
                 .x = window.current_mouse_position.x,
                 .y = window.current_mouse_position.y,
+            } });
+
+            return 0;
+        },
+
+        // https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-killfocus
+        WM_KILLFOCUS => {
+            window.event_loop.sendEvent(.{ .focus_changed = .{
+                .window = window.toPlatformAgnostic(),
+                .focused = false,
+            } });
+
+            return 0;
+        },
+
+        // https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-setfocus
+        WM_SETFOCUS => {
+            window.event_loop.sendEvent(.{ .focus_changed = .{
+                .window = window.toPlatformAgnostic(),
+                .focused = true,
             } });
 
             return 0;

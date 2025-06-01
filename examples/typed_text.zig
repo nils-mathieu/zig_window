@@ -2,6 +2,7 @@
 
 const zw = @import("zig_window");
 const std = @import("std");
+const utility = @import("common/utility.zig");
 
 const App = struct {
     window: *zw.Window,
@@ -19,8 +20,14 @@ fn onEvent(app: *App, event_loop: *zw.EventLoop, event: zw.Event) void {
             switch (ev.ime) {
                 .enabled => std.debug.print("IME enabled\n", .{}),
                 .disabled => std.debug.print("IME disabled\n", .{}),
-                .commit => |text| std.debug.print("'{s}'\n", .{text}),
-                .preedit => |preedit| std.debug.print("preedit: '{s}' ({}..{})\n", .{ preedit.text, preedit.cursor_start, preedit.cursor_end }),
+                .commit => |text| std.debug.print(
+                    "'{}'\n",
+                    .{utility.debugStr(event_loop.allocator(), text)},
+                ),
+                .preedit => |preedit| std.debug.print(
+                    "preedit: '{}' ({}..{})\n",
+                    .{ utility.debugStr(event_loop.allocator(), preedit.text), preedit.cursor_start, preedit.cursor_end },
+                ),
             }
         },
         else => {},
