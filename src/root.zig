@@ -250,6 +250,14 @@ pub const Event = union(enum) {
         focused: bool,
     },
 
+    /// A window's scale factor has changed.
+    scale_factor_changed: struct {
+        /// The window whose scale factor has changed.
+        window: *Window,
+        /// The new scale factor of the window.
+        scale_factor: f64,
+    },
+
     /// A keyboard event has been received.
     keyboard: Keyboard,
 

@@ -218,25 +218,13 @@ pub const OsVersion = struct {
     }
 };
 
-/// Describes the bitfield that is passed to the `WM_KEYDOWN` messages and friends.
-const KeystrokeMessageFlags = packed struct(u32) {
-    /// The number of times the event should be executed. This happens when the message queue
-    /// lags behind the event handler.
-    repeat_count: u16,
-    /// The scan code.
-    scan_code: u8,
-    /// Whether the key is an extended key.
-    extended: bool,
+/// How aware the current process is aware of DPI changes.
+pub const DpiAwareness = enum {
+    // https://learn.microsoft.com/en-us/windows/win32/hidpi/dpi-awareness-context
 
-    _reserved: u4,
-
-    /// The context code associated with the key.
-    context_code: u1,
-
-    /// Whether the key was previously down.
-    was_down: bool,
-    /// The transition state. This determines whether the key is currently up.
-    is_up: bool,
+    unaware,
+    per_monitor_v2,
+    per_monitor,
 };
 
 // =================================================================================================
@@ -253,6 +241,8 @@ pub const EventLoop = struct {
 
     /// The current version of Windows we are running on.
     windows_version: OsVersion,
+    /// The current DPI awareness state of the process.
+    dpi_awareness: DpiAwareness,
 
     /// The handle to a high-resolution waitable timer.
     ///
@@ -287,6 +277,8 @@ pub const EventLoop = struct {
         const windows_version = OsVersion.get();
         log.debug("detected Windows version: {}", .{windows_version});
 
+        const dpi_awareness = becomeDpiAware();
+
         // Register the window class that will be used by all windows created on this
         // event loop.
         try registerClass(Window.class_name, hinstance, &wndProc);
@@ -312,6 +304,7 @@ pub const EventLoop = struct {
             .allocator = config.allocator,
             .user_app = config.user_app,
             .windows_version = windows_version,
+            .dpi_awareness = dpi_awareness,
             .high_rez_timer = high_rez_timer,
             .wake_up_event = wake_up_event,
             .hinstance = hinstance,
@@ -618,8 +611,8 @@ pub const Window = struct {
 
         // Re-apply window styles because some of theme are overwritten for some reasons. This
         // should not produce any flickering because the window is not yet visible.
-        _ = setWindowLong(hwnd, win32.ui.windows_and_messaging.GWL_STYLE, @bitCast(styles.style));
-        _ = setWindowLong(hwnd, win32.ui.windows_and_messaging.GWL_EXSTYLE, @bitCast(styles.ex_style));
+        setWindowLong(hwnd, win32.ui.windows_and_messaging.GWL_STYLE, @bitCast(styles.style));
+        setWindowLong(hwnd, win32.ui.windows_and_messaging.GWL_EXSTYLE, @bitCast(styles.ex_style));
 
         if (config.visible) {
             var show_command: win32.ui.windows_and_messaging.SHOW_WINDOW_CMD = .{};
@@ -1026,6 +1019,12 @@ fn wndProc(
             const createstruct: *CREATESTRUCTW = @ptrFromInt(@as(usize, @bitCast(lparam)));
             const init_data: *InitData = @ptrCast(@alignCast(createstruct.lpCreateParams.?));
 
+            // If we were not able to get the `PER_MONITOR_V2` awareness state, we need to call
+            // `EnableNonClientDpiScaling`.
+            if (init_data.event_loop.dpi_awareness == .per_monitor) {
+                enableNonClientDpiScaling(hwnd);
+            }
+
             init_data.window.* = Window{
                 .min_surface_size = init_data.config.min_surface_size,
                 .max_surface_size = init_data.config.max_surface_size,
@@ -1118,6 +1117,7 @@ fn handleMessage(
     const WM_MOUSELEAVE = 0x02A3;
     const WM_SETFOCUS = win32.ui.windows_and_messaging.WM_SETFOCUS;
     const WM_KILLFOCUS = win32.ui.windows_and_messaging.WM_KILLFOCUS;
+    const WM_DPICHANGED = win32.ui.windows_and_messaging.WM_DPICHANGED;
 
     switch (msg) {
 
@@ -1187,6 +1187,26 @@ fn handleMessage(
             const VIRTUAL_KEY = win32.ui.input.keyboard_and_mouse.VIRTUAL_KEY;
             const MapVirtualKeyExW = win32.ui.input.keyboard_and_mouse.MapVirtualKeyExW;
             const MAPVK_VK_TO_VSC_EX = win32.ui.windows_and_messaging.MAPVK_VK_TO_VSC_EX;
+
+            const KeystrokeMessageFlags = packed struct(u32) {
+                /// The number of times the event should be executed. This happens when the message queue
+                /// lags behind the event handler.
+                repeat_count: u16,
+                /// The scan code.
+                scan_code: u8,
+                /// Whether the key is an extended key.
+                extended: bool,
+
+                _reserved: u4,
+
+                /// The context code associated with the key.
+                context_code: u1,
+
+                /// Whether the key was previously down.
+                was_down: bool,
+                /// The transition state. This determines whether the key is currently up.
+                is_up: bool,
+            };
 
             const keystroke_flags: KeystrokeMessageFlags = @bitCast(@as(u32, @truncate(@as(usize, @bitCast(lparam)))));
             const virtual_key_code: VIRTUAL_KEY = @enumFromInt(@as(u16, @truncate(wparam)));
@@ -1284,6 +1304,28 @@ fn handleMessage(
             window.event_loop.sendEvent(.{ .focus_changed = .{
                 .window = window.toPlatformAgnostic(),
                 .focused = true,
+            } });
+
+            return 0;
+        },
+
+        // https://learn.microsoft.com/en-us/windows/win32/hidpi/wm-dpichanged
+        WM_DPICHANGED => {
+            // The Windows API provide the horizontal AND vertical values for the DPI scaling
+            // in the high and low words of `wparam`.
+            // However, the documentation for `WM_DPICHANGED` indicates that they are always the
+            // same.
+            const dpi_x = @as(u16, @truncate(wparam));
+            const dpi_y = @as(u16, @truncate(wparam >> 16));
+            if (std.debug.runtime_safety and dpi_x != dpi_y) {
+                std.debug.panic("different X and Y DPI values: {}, {}", .{ dpi_x, dpi_y });
+            }
+
+            const base_dpi = 96.0;
+
+            window.event_loop.sendEvent(.{ .scale_factor_changed = .{
+                .window = window.toPlatformAgnostic(),
+                .scale_factor = @as(f64, @floatFromInt(dpi_x)) / base_dpi,
             } });
 
             return 0;
@@ -1456,6 +1498,33 @@ fn scanCodeToKey(scan_code: u16) zw.Key {
         0xe066 => zw.Key.browser_favorites,
         else => zw.Key.unidentified,
     };
+}
+
+// =================================================================================================
+// MISC ROUTINES
+// =================================================================================================
+
+/// Ensures that the current process is DPI aware.
+///
+/// # Returns
+///
+/// This function returns whether the operation was successful.
+pub fn becomeDpiAware() DpiAwareness {
+    const SetProcessDpiAwarenessContext = win32.ui.hi_dpi.SetProcessDpiAwarenessContext;
+    const DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = win32.ui.hi_dpi.DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2;
+    const DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE = win32.ui.hi_dpi.DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE;
+
+    var ret: win32.foundation.BOOL = undefined;
+
+    ret = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    if (ret != 0) return .per_monitor_v2;
+    log.warn("`SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)` failed: {}", .{fmtLastError()});
+
+    ret = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE);
+    if (ret != 0) return .per_monitor;
+    log.warn("`SetProcessDpiAwarenessContext(PER_MONITOR_AWARE)` failed: {}", .{fmtLastError()});
+
+    return .unaware;
 }
 
 // =================================================================================================
@@ -1985,5 +2054,15 @@ fn trackMouseEvent(hwnd: win32.foundation.HWND, flags: win32.ui.input.keyboard_a
 
     if (std.debug.runtime_safety and ret == 0) {
         log.warn("`TrackMouseEvent` failed: {}", .{fmtLastError()});
+    }
+}
+
+/// Invokes the `EnableNonClientDpiScaling` function.
+fn enableNonClientDpiScaling(hwnd: win32.foundation.HWND) void {
+    const EnableNonClientDpiScaling = win32.ui.hi_dpi.EnableNonClientDpiScaling;
+
+    const ret = EnableNonClientDpiScaling(hwnd);
+    if (ret == 0) {
+        log.warn("`EnableNonClientDpiScaling` failed: {}", .{fmtLastError()});
     }
 }
