@@ -228,6 +228,12 @@ pub const Event = union(enum) {
         window: *Window,
     },
 
+    /// Indicates that a window should redraw its content.
+    ///
+    /// Rendering may be done on any thread, but presenting the rendered frame to the window should be done
+    /// in this event callback.
+    redraw_requested: *Window,
+
     /// The size of a window's surface has changed.
     ///
     /// Note that this corrsepond to the window's "surface" area (as opposed to the outer window
@@ -965,6 +971,29 @@ pub const Window = struct {
         return platform.interface.window.outerPosition(self);
     }
 
+    /// Returns whether the window is visible or not.
+    pub inline fn isVisible(self: *Window) bool {
+        return platform.interface.window.isVisible(self);
+    }
+
+    // =============================================================================================
+    // OTHER
+    // =============================================================================================
+
+    /// Notifies the window manager that presentation to the window is about to happen.
+    ///
+    /// This function should be called right before presenting a rendered frame to the window,
+    /// for example with `glSwapBuffers()` on OpenGL-based systems, or with `vkQueuePresentKHR()`
+    /// on Vulkan-based systems.
+    pub inline fn presentNotify(self: *Window) void {
+        return platform.interface.window.presentNotify(self);
+    }
+
+    /// Requests the window to be redrawn.
+    pub inline fn requestRedraw(self: *Window) void {
+        return platform.interface.window.requestRedraw(self);
+    }
+
     // =============================================================================================
     // SETTERS
     // =============================================================================================
@@ -995,6 +1024,20 @@ pub const Window = struct {
     /// does nothing.
     pub inline fn setMaxSurfaceSize(self: *Window, new_max_size: Size) void {
         return platform.interface.window.setMaxSurfaceSize(self, new_max_size);
+    }
+
+    /// Shows the window.
+    ///
+    /// # Parameters
+    ///
+    /// - `take_focus`: Whether the window should take the keyboard focus when it is shown.
+    pub inline fn show(self: *Window, take_focus: bool) void {
+        return platform.interface.window.show(self, take_focus);
+    }
+
+    /// Hides the window.
+    pub inline fn hide(self: *Window) void {
+        return platform.interface.window.hide(self);
     }
 };
 

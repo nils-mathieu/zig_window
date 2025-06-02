@@ -111,6 +111,33 @@ pub const interface = struct {
             const current_size = self.platform_specific.getClientRect().size();
             self.platform_specific.setClientSize(current_size);
         }
+
+        pub inline fn presentNotify(self: *zw.Window) void {
+            _ = self;
+        }
+
+        pub inline fn requestRedraw(self: *zw.Window) void {
+            self.platform_specific.redrawWindow();
+        }
+
+        pub inline fn isVisible(self: *zw.Window) bool {
+            const IsWindowVisible = win32.ui.windows_and_messaging.IsWindowVisible;
+            return IsWindowVisible(self.platform_specific.hwnd) != 0;
+        }
+
+        pub fn show(self: *zw.Window, take_focus: bool) void {
+            const ShowWindow = win32.ui.windows_and_messaging.ShowWindow;
+            const cmd = if (take_focus)
+                win32.ui.windows_and_messaging.SW_SHOW
+            else
+                win32.ui.windows_and_messaging.SW_SHOWNOACTIVATE;
+            _ = ShowWindow(self.platform_specific.hwnd, cmd);
+        }
+
+        pub inline fn hide(self: *zw.Window) void {
+            const ShowWindow = win32.ui.windows_and_messaging.ShowWindow;
+            _ = ShowWindow(self.platform_specific.hwnd, win32.ui.windows_and_messaging.SW_HIDE);
+        }
     };
 };
 
@@ -535,6 +562,12 @@ pub const Window = struct {
     current_mouse_position: zw.Position = .invalid,
     /// Whether the mouse is currently in the window.
     is_mouse_hover: bool = false,
+
+    /// Whether the window was requested to redraw itself manually by the user.
+    ///
+    /// This is done to prevent confirming window invalidations during the `WM_PAINT` event
+    /// when a new event has been requested.
+    manual_redraw_requested: bool = false,
 
     /// The name of the window class used when creating windows.
     pub const class_name = std.unicode.utf8ToUtf16LeStringLiteral("zig_window_class_name");
@@ -970,6 +1003,12 @@ pub const Window = struct {
     pub fn notifyEndOfMessageLoopIteration(self: *Window) void {
         self.flushPendingKeyboardState();
     }
+
+    /// Requests a `WM_PAINT` event to be posted on the window's message queue.
+    pub fn redrawWindow(self: *Window) void {
+        rawRedrawWindow(self.platform_specific.hwnd);
+        self.manual_redraw_requested = true;
+    }
 };
 
 /// Contains information about a keyboard received by a window.
@@ -1118,6 +1157,7 @@ fn handleMessage(
     const WM_SETFOCUS = win32.ui.windows_and_messaging.WM_SETFOCUS;
     const WM_KILLFOCUS = win32.ui.windows_and_messaging.WM_KILLFOCUS;
     const WM_DPICHANGED = win32.ui.windows_and_messaging.WM_DPICHANGED;
+    const WM_PAINT = win32.ui.windows_and_messaging.WM_PAINT;
 
     switch (msg) {
 
@@ -1327,6 +1367,24 @@ fn handleMessage(
                 .window = window.toPlatformAgnostic(),
                 .scale_factor = @as(f64, @floatFromInt(dpi_x)) / base_dpi,
             } });
+
+            return 0;
+        },
+
+        // https://learn.microsoft.com/en-us/windows/win32/gdi/wm-paint
+        WM_PAINT => {
+            window.event_loop.sendEvent(.{ .redraw_requested = window.toPlatformAgnostic() });
+
+            _ = DefWindowProcW(window.hwnd, msg, wparam, lparam);
+
+            // It's possible for the user to request a redraw manually during the
+            // `WM_PAINT` event. In this case, calling `RedrawWindow` will do nothing.
+            // We need to call the function again *after* the event has been confirmed by
+            // calling `DefWindowProcW`.
+            if (window.manual_redraw_requested) {
+                rawRedrawWindow(window.hwnd);
+                window.manual_redraw_requested = false;
+            }
 
             return 0;
         },
@@ -2064,5 +2122,16 @@ fn enableNonClientDpiScaling(hwnd: win32.foundation.HWND) void {
     const ret = EnableNonClientDpiScaling(hwnd);
     if (ret == 0) {
         log.warn("`EnableNonClientDpiScaling` failed: {}", .{fmtLastError()});
+    }
+}
+
+/// Invokes the `RedrawWindow` function.
+fn rawRedrawWindow(hwnd: win32.foundation.HWND) void {
+    const RedrawWindow = win32.graphics.gdi.RedrawWindow;
+    const RDW_INVALIDATE = win32.graphics.gdi.RDW_INVALIDATE;
+
+    const ret = RedrawWindow(hwnd, null, null, RDW_INVALIDATE);
+    if (std.debug.runtime_safety and ret == 0) {
+        log.warn("`RedrawWindow` failed: {}", .{fmtLastError()});
     }
 }
