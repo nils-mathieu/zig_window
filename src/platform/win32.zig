@@ -327,6 +327,9 @@ pub const EventLoop = struct {
         const wake_up_event = try createEvent();
         errdefer closeHandle(wake_up_event);
 
+        // Register the application's raw input devices.
+        setupRawInput();
+
         self.* = EventLoop{
             .allocator = config.allocator,
             .user_app = config.user_app,
@@ -531,6 +534,10 @@ pub const Window = struct {
     /// `getHinstance()`.
     hwnd: win32.foundation.HWND,
 
+    /// The handle of the last device event received.
+    ///
+    /// This is populated when a raw input event is received.
+    last_device_id: ?win32.foundation.HANDLE = null,
     /// The last keyboard event received on the message loop.
     ///
     /// This is populated whenever a `WM_KEYDOWN`, `WM_KEYUP`, or similar event is received, and
@@ -568,6 +575,10 @@ pub const Window = struct {
     /// This is done to prevent confirming window invalidations during the `WM_PAINT` event
     /// when a new event has been requested.
     manual_redraw_requested: bool = false,
+
+    /// The buffer that is used to allocate the memory necessary to store instances
+    /// of `RAWINPUT`.
+    rawinput_buffer: []align(@alignOf(win32.ui.input.RAWINPUT)) u8 = &.{},
 
     /// The name of the window class used when creating windows.
     pub const class_name = std.unicode.utf8ToUtf16LeStringLiteral("zig_window_class_name");
@@ -662,8 +673,11 @@ pub const Window = struct {
     ///
     /// **Note:** this function does not destroys the memory.
     pub fn deinit(self: *Window) void {
-        self.typed_utf16_chars.deinit(self.event_loop.allocator);
-        self.utf8_buf.deinit(self.event_loop.allocator);
+        const gpa = self.event_loop.allocator;
+
+        gpa.free(self.rawinput_buffer);
+        self.typed_utf16_chars.deinit(gpa);
+        self.utf8_buf.deinit(gpa);
 
         const idx = std.mem.indexOfScalar(*Window, self.event_loop.windows.items, self).?;
         _ = self.event_loop.windows.swapRemove(idx);
@@ -892,6 +906,44 @@ pub const Window = struct {
         return buf.items;
     }
 
+    /// Reads the provided raw input event and returns a pointer to the raw input data.
+    ///
+    /// The data is stored in the window's internal temporary buffer and will remain
+    /// valid until the next call to `readRawInput`.
+    pub fn readRawInput(self: *Window, hrawinput: win32.ui.input.HRAWINPUT) error{ PlatformError, OutOfMemory }!*win32.ui.input.RAWINPUT {
+        const GetRawInputData = win32.ui.input.GetRawInputData;
+
+        var event_size: u32 = undefined;
+
+        while (true) {
+            event_size = @intCast(self.rawinput_buffer.len);
+
+            // Attempt to store the rawinput structure in the current buffer.
+            const ret = GetRawInputData(
+                hrawinput,
+                .INPUT,
+                self.rawinput_buffer.ptr,
+                &event_size,
+                @sizeOf(win32.ui.input.RAWINPUTHEADER),
+            );
+
+            if (ret != std.math.maxInt(u32)) {
+                break;
+            }
+
+            const code = win32.foundation.GetLastError();
+            if (code != .ERROR_INSUFFICIENT_BUFFER) {
+                std.log.err("`GetRawInputData` failed: {}", .{fmtError(code)});
+                return error.PlatformError;
+            }
+
+            // If the buffer is too small, we need to allocate a new one.
+            self.rawinput_buffer = try self.event_loop.allocator.realloc(self.rawinput_buffer, event_size);
+        }
+
+        return @ptrCast(self.rawinput_buffer.ptr);
+    }
+
     /// Flushes the currently pending keyboard state to the user's event handler.
     ///
     /// If there is no pending keyboard state, this function does nothing.
@@ -961,7 +1013,7 @@ pub const Window = struct {
 
             self.event_loop.sendEvent(.{ .keyboard = .{
                 .window = self.toPlatformAgnostic(),
-                .device = null,
+                .device = @ptrCast(self.last_device_id),
                 .key = scanCodeToKey(last_ev.scan_code),
                 .scan_code = last_ev.scan_code,
                 .state = last_ev.state,
@@ -979,7 +1031,7 @@ pub const Window = struct {
                 self.event_loop.sendEvent(.{
                     .text_typed = .{
                         .window = self.toPlatformAgnostic(),
-                        .device = null,
+                        .device = @ptrCast(self.last_device_id),
                         .ime = .{ .preedit = .{
                             .text = typed_characters,
                             .cursor_start = 0,
@@ -991,7 +1043,7 @@ pub const Window = struct {
                 self.event_loop.sendEvent(.{
                     .text_typed = .{
                         .window = self.toPlatformAgnostic(),
-                        .device = null,
+                        .device = @ptrCast(self.last_device_id),
                         .ime = .{ .commit = typed_characters },
                     },
                 });
@@ -1002,6 +1054,7 @@ pub const Window = struct {
     /// Notifies the window state that no more events are available in the message queue.
     pub fn notifyEndOfMessageLoopIteration(self: *Window) void {
         self.flushPendingKeyboardState();
+        self.last_device_id = null;
     }
 
     /// Requests a `WM_PAINT` event to be posted on the window's message queue.
@@ -1158,6 +1211,7 @@ fn handleMessage(
     const WM_KILLFOCUS = win32.ui.windows_and_messaging.WM_KILLFOCUS;
     const WM_DPICHANGED = win32.ui.windows_and_messaging.WM_DPICHANGED;
     const WM_PAINT = win32.ui.windows_and_messaging.WM_PAINT;
+    const WM_INPUT = win32.ui.windows_and_messaging.WM_INPUT;
 
     switch (msg) {
 
@@ -1384,6 +1438,41 @@ fn handleMessage(
             if (window.manual_redraw_requested) {
                 rawRedrawWindow(window.hwnd);
                 window.manual_redraw_requested = false;
+            }
+
+            return 0;
+        },
+
+        // https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-input
+        WM_INPUT => {
+            const HRAWINPUT = win32.ui.input.HRAWINPUT;
+            const RIM_TYPEMOUSE = @intFromEnum(win32.ui.input.RIM_TYPEMOUSE);
+            const RIM_TYPEKEYBOARD = @intFromEnum(win32.ui.input.RIM_TYPEKEYBOARD);
+            const RIM_TYPEHID = @intFromEnum(win32.ui.input.RIM_TYPEHID);
+            const MOUSE_MOVE_ABSOLUTE = win32.devices.human_interface_device.MOUSE_MOVE_ABSOLUTE;
+
+            const hrawinput: HRAWINPUT = @ptrFromInt(@as(usize, @bitCast(lparam)));
+            const rawinput = window.readRawInput(hrawinput) catch return 0;
+
+            window.last_device_id = rawinput.header.hDevice;
+
+            switch (rawinput.header.dwType) {
+                RIM_TYPEMOUSE => {
+                    const mouse = rawinput.data.mouse;
+
+                    if (mouse.usFlags & MOUSE_MOVE_ABSOLUTE == 0) {
+                        window.event_loop.sendEvent(.{
+                            .mouse_moved = .{
+                                .device = @ptrCast(rawinput.header.hDevice),
+                                .delta_x = @floatFromInt(mouse.lLastX),
+                                .delta_y = @floatFromInt(mouse.lLastY),
+                            },
+                        });
+                    }
+                },
+                RIM_TYPEKEYBOARD => {},
+                RIM_TYPEHID => {},
+                else => {},
             }
 
             return 0;
@@ -2134,4 +2223,40 @@ fn rawRedrawWindow(hwnd: win32.foundation.HWND) void {
     if (std.debug.runtime_safety and ret == 0) {
         log.warn("`RedrawWindow` failed: {}", .{fmtLastError()});
     }
+}
+
+/// Invokes the `RegisterRawInputDevices` function.
+fn registerRawInputDevices(devs: []win32.ui.input.RAWINPUTDEVICE) void {
+    const RegisterRawInputDevices = win32.ui.input.RegisterRawInputDevices;
+    const RAWINPUTDEVICE = win32.ui.input.RAWINPUTDEVICE;
+
+    const ret = RegisterRawInputDevices(devs.ptr, @intCast(devs.len), @sizeOf(RAWINPUTDEVICE));
+    if (std.debug.runtime_safety and ret == 0) {
+        log.warn("`RegisterRawInputDevices` failed: {}", .{fmtLastError()});
+    }
+}
+
+/// Sets up raw input for the application.
+fn setupRawInput() void {
+    const RAWINPUTDEVICE = win32.ui.input.RAWINPUTDEVICE;
+    const HID_USAGE_PAGE_GENERIC = win32.devices.human_interface_device.HID_USAGE_PAGE_GENERIC;
+    const HID_USAGE_GENERIC_MOUSE = win32.devices.human_interface_device.HID_USAGE_GENERIC_MOUSE;
+    const HID_USAGE_GENERIC_KEYBOARD = win32.devices.human_interface_device.HID_USAGE_GENERIC_KEYBOARD;
+
+    var devices = [_]RAWINPUTDEVICE{
+        RAWINPUTDEVICE{
+            .dwFlags = .{ .DEVNOTIFY = 1 },
+            .hwndTarget = null,
+            .usUsagePage = HID_USAGE_PAGE_GENERIC,
+            .usUsage = HID_USAGE_GENERIC_MOUSE,
+        },
+        RAWINPUTDEVICE{
+            .dwFlags = .{ .DEVNOTIFY = 1 },
+            .hwndTarget = null,
+            .usUsagePage = HID_USAGE_PAGE_GENERIC,
+            .usUsage = HID_USAGE_GENERIC_KEYBOARD,
+        },
+    };
+
+    registerRawInputDevices(&devices);
 }

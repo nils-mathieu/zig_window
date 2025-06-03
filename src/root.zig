@@ -321,6 +321,30 @@ pub const Event = union(enum) {
         y: i32,
     },
 
+    /// Indicates that a mouse device has moved.
+    ///
+    /// Note that this event is distinct from the `.pointer_moved` event. This is specifically
+    /// related to mouse motion and may or may not be correlated to any cursor movement.
+    ///
+    /// Specifically, this event is not subject to cursor acceleration and other platform-specific
+    /// transformations.
+    mouse_moved: struct {
+        /// The ID of the device that produced the event, if available.
+        device: ?DeviceId,
+
+        /// The amount of motion in the X direction.
+        ///
+        /// The exact unit of this field is unspecified and may vary between
+        /// input devices.
+        delta_x: f64,
+
+        /// The amount of motion in the Y direction.
+        ///
+        /// The exact unit of this field is unspecified and may vary between
+        /// input devices.
+        delta_y: f64,
+    },
+
     /// A keyboard event.
     pub const Keyboard = struct {
         /// The window that received the event.
