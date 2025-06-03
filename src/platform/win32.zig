@@ -1059,7 +1059,7 @@ pub const Window = struct {
 
     /// Requests a `WM_PAINT` event to be posted on the window's message queue.
     pub fn redrawWindow(self: *Window) void {
-        rawRedrawWindow(self.platform_specific.hwnd);
+        rawRedrawWindow(self.hwnd);
         self.manual_redraw_requested = true;
     }
 };
@@ -1212,6 +1212,14 @@ fn handleMessage(
     const WM_DPICHANGED = win32.ui.windows_and_messaging.WM_DPICHANGED;
     const WM_PAINT = win32.ui.windows_and_messaging.WM_PAINT;
     const WM_INPUT = win32.ui.windows_and_messaging.WM_INPUT;
+    const WM_LBUTTONDOWN = win32.ui.windows_and_messaging.WM_LBUTTONDOWN;
+    const WM_LBUTTONUP = win32.ui.windows_and_messaging.WM_LBUTTONUP;
+    const WM_RBUTTONDOWN = win32.ui.windows_and_messaging.WM_RBUTTONDOWN;
+    const WM_RBUTTONUP = win32.ui.windows_and_messaging.WM_RBUTTONUP;
+    const WM_MBUTTONDOWN = win32.ui.windows_and_messaging.WM_MBUTTONDOWN;
+    const WM_MBUTTONUP = win32.ui.windows_and_messaging.WM_MBUTTONUP;
+    const WM_XBUTTONDOWN = win32.ui.windows_and_messaging.WM_XBUTTONDOWN;
+    const WM_XBUTTONUP = win32.ui.windows_and_messaging.WM_XBUTTONUP;
 
     switch (msg) {
 
@@ -1352,8 +1360,9 @@ fn handleMessage(
                 window.event_loop.sendEvent(.{ .pointer_entered = .{
                     .window = window.toPlatformAgnostic(),
                     .device = null,
-                    .x = x,
-                    .y = y,
+                    .x = @floatFromInt(x),
+                    .y = @floatFromInt(y),
+                    .finger_id = 0,
                 } });
 
                 trackMouseEvent(window.hwnd, TME_LEAVE);
@@ -1362,8 +1371,10 @@ fn handleMessage(
             window.event_loop.sendEvent(.{ .pointer_moved = .{
                 .window = window.toPlatformAgnostic(),
                 .device = null,
-                .x = x,
-                .y = y,
+                .x = @floatFromInt(x),
+                .y = @floatFromInt(y),
+                .finger_id = 0,
+                .force = 1.0,
             } });
 
             return 0;
@@ -1376,8 +1387,9 @@ fn handleMessage(
             window.event_loop.sendEvent(.{ .pointer_left = .{
                 .window = window.toPlatformAgnostic(),
                 .device = null,
-                .x = window.current_mouse_position.x,
-                .y = window.current_mouse_position.y,
+                .x = @floatFromInt(window.current_mouse_position.x),
+                .y = @floatFromInt(window.current_mouse_position.y),
+                .finger_id = 0,
             } });
 
             return 0;
@@ -1474,6 +1486,68 @@ fn handleMessage(
                 RIM_TYPEHID => {},
                 else => {},
             }
+
+            return 0;
+        },
+
+        // https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-lbuttondown
+        // https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-lbuttonup
+        // https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-rbuttondown
+        // https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-rbuttonup
+        // https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-mbuttondown
+        // https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-mbuttonup
+        // https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-xbuttondown
+        // https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-xbuttonup
+        WM_LBUTTONDOWN,
+        WM_LBUTTONUP,
+        WM_RBUTTONDOWN,
+        WM_RBUTTONUP,
+        WM_MBUTTONDOWN,
+        WM_MBUTTONUP,
+        WM_XBUTTONDOWN,
+        WM_XBUTTONUP,
+        => {
+            const x = @as(i16, @bitCast(@as(u16, @truncate(@as(usize, @bitCast(lparam))))));
+            const y = @as(i16, @bitCast(@as(u16, @truncate(@as(usize, @bitCast(lparam)) >> 16))));
+
+            var button: zw.Event.PointerButton = undefined;
+            switch (msg) {
+                WM_LBUTTONDOWN, WM_LBUTTONUP => button = .primary,
+                WM_RBUTTONDOWN, WM_RBUTTONUP => button = .secondary,
+                WM_MBUTTONDOWN, WM_MBUTTONUP => button = .middle,
+                WM_XBUTTONDOWN, WM_XBUTTONUP => {
+                    switch (@as(u16, @truncate(wparam >> 16))) {
+                        0x0000 => button = .other(0),
+                        0x0001 => button = .back,
+                        0x0002 => button = .forward,
+                        else => |btn| {
+                            if (btn - 2 <= 250) {
+                                button = .other(@intCast(btn - 2));
+                            } else {
+                                return 0;
+                            }
+                        },
+                    }
+                },
+                else => unreachable,
+            }
+
+            const pressed = switch (msg) {
+                WM_LBUTTONDOWN, WM_RBUTTONDOWN, WM_MBUTTONDOWN, WM_XBUTTONDOWN => true,
+                WM_LBUTTONUP, WM_RBUTTONUP, WM_MBUTTONUP, WM_XBUTTONUP => false,
+                else => unreachable,
+            };
+
+            window.event_loop.sendEvent(.{ .pointer_button = .{
+                .window = window.toPlatformAgnostic(),
+                .device = @ptrCast(window.last_device_id),
+                .button = button,
+                .finger_id = 0,
+                .pressed = pressed,
+                .force = 1.0,
+                .x = @floatFromInt(x),
+                .y = @floatFromInt(y),
+            } });
 
             return 0;
         },

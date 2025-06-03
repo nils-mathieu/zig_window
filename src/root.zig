@@ -281,10 +281,22 @@ pub const Event = union(enum) {
 
         /// The X position of the pointing device, relative to the top-left corner of the
         /// window's surface area.
-        x: i32,
+        x: f64,
         /// The Y position of the pointing device, relative to the top-left corner of the
         /// window's surface area.
-        y: i32,
+        y: f64,
+
+        /// The ID of the finger that produced the event, if a multi-touch device
+        /// is being used.
+        ///
+        /// If no finger is associated with the event, this will be zero.
+        finger_id: u32,
+
+        /// The force associated with the event.
+        ///
+        /// For mouse events, this will always be one. For touch-screen events, this may contain
+        /// the force associated with the touch.
+        force: f64,
     },
 
     /// Indicates that a pointing device has entered a window's surface area.
@@ -298,10 +310,16 @@ pub const Event = union(enum) {
 
         /// The X position of the pointing device, relative to the top-left corner of the
         /// window's surface area.
-        x: i32,
+        x: f64,
         /// The Y position of the pointing device, relative to the top-left corner of the
         /// window's surface area.
-        y: i32,
+        y: f64,
+
+        /// The ID of the finger that produced the event, if a multi-touch device
+        /// is being used.
+        ///
+        /// If no finger is associated with the event, this will be zero.
+        finger_id: u32,
     },
 
     /// Indicates that a pointing device has left a window's surface area.
@@ -315,10 +333,51 @@ pub const Event = union(enum) {
 
         /// The X position of the pointing device, relative to the top-left corner of the
         /// window's surface area.
-        x: i32,
+        x: f64,
         /// The Y position of the pointing device, relative to the top-left corner of the
         /// window's surface area.
-        y: i32,
+        y: f64,
+
+        /// The ID of the finger that produced the event, if a multi-touch device
+        /// is being used.
+        ///
+        /// If no finger is associated with the event, this will be zero.
+        finger_id: u32,
+    },
+
+    /// A pointing device button has been pressed or released.
+    pointer_button: struct {
+        /// The window that received the event.
+        window: *Window,
+        /// The ID of the device that produced the event, if available.
+        device: ?DeviceId,
+
+        /// The X position of the pointing device, relative to the top-left corner of the
+        /// window's surface area.
+        x: f64,
+        /// The Y position of the pointing device, relative to the top-left corner of the
+        /// window's surface area.
+        y: f64,
+
+        /// Whether the button was pressed.
+        ///
+        /// If `false`, it has been released.
+        pressed: bool,
+
+        /// The button that was pressed or released.
+        button: PointerButton,
+
+        /// The ID of the finger that produced the event, if a multi-touch device
+        /// is being used.
+        ///
+        /// If no finger is associated with the event, this will be zero.
+        finger_id: u32,
+
+        /// The force associated with the event.
+        ///
+        /// For mouse events, this will always be one. For touch-screen events, this may contain
+        /// the force associated with the touch.
+        force: f64,
     },
 
     /// Indicates that a mouse device has moved.
@@ -344,6 +403,56 @@ pub const Event = union(enum) {
         /// input devices.
         delta_y: f64,
     },
+
+    /// A pointer button.
+    pub const PointerButton = enum(u8) {
+        /// The primary pointer button.
+        ///
+        /// If the user hasn't inverted their primary and secondary buttons, this will be the
+        /// left button.
+        primary,
+
+        /// The secondary pointer button.
+        ///
+        /// If the user hasn't inverted their primary and secondary buttons, this will be the
+        /// right button.
+        secondary,
+
+        /// The middle pointer button.
+        ///
+        /// This is usually used when the mouse wheel is pressed.
+        middle,
+
+        /// The "back" pointer button.
+        back,
+
+        /// The "forward" pointer button.
+        forward,
+
+        // Other pointer buttons are possible.
+        _,
+
+        /// Creates a new `PointerButton` from the provided code.
+        ///
+        /// # Remarks
+        ///
+        /// This function assumes that the code is less or equal to `250`.
+        pub fn other(code: u8) @This() {
+            return @enumFromInt(code + 5);
+        }
+
+        /// Formats the pointer button as a string.
+        pub fn format(self: @This(), comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = opts;
+
+            if (std.enums.tagName(@This(), self)) |name| {
+                return writer.print("{s}", .{name});
+            } else {
+                return writer.print("other({d})", .{@intFromEnum(self)});
+            }
+        }
+    };
 
     /// A keyboard event.
     pub const Keyboard = struct {
