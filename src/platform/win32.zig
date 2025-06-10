@@ -1277,6 +1277,11 @@ fn handleMessage(
                 log.warn("ran out of memory while appending written UTF-16 data to buffer", .{});
             };
 
+            // Check whether the queue contains other keyboard events. If it doesn't, then flush
+            // the keyboard state now.
+            if (!hasKeyboardEvents(window.hwnd))
+                window.flushPendingKeyboardState();
+
             return 0;
         },
 
@@ -1340,6 +1345,11 @@ fn handleMessage(
                 .state = state,
                 .virtual_key_code = virtual_key_code,
             };
+
+            // Check whether the queue contains other keyboard events. If it doesn't, then flush
+            // the keyboard state now.
+            if (!hasKeyboardEvents(window.hwnd))
+                window.flushPendingKeyboardState();
 
             return 0;
         },
@@ -2332,4 +2342,17 @@ fn setupRawInput() void {
     };
 
     registerRawInputDevices(&devices);
+}
+
+/// Returns whether the message queue of the provided window contains
+/// any keyboard events.
+fn hasKeyboardEvents(hwnd: win32.foundation.HWND) bool {
+    const PeekMessageW = win32.ui.windows_and_messaging.PeekMessageW;
+    const MSG = win32.ui.windows_and_messaging.MSG;
+    const WM_KEYFIRST = win32.ui.windows_and_messaging.WM_KEYFIRST;
+    const WM_KEYLAST = win32.ui.windows_and_messaging.WM_KEYLAST;
+    const PM_NOREMOVE = win32.ui.windows_and_messaging.PM_NOREMOVE;
+
+    var msg: MSG = undefined;
+    return PeekMessageW(&msg, hwnd, WM_KEYFIRST, WM_KEYLAST, PM_NOREMOVE) != 0;
 }
