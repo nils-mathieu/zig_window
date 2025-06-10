@@ -54,7 +54,7 @@ pub const interface = struct {
             self.platform_specific.exiting = true;
         }
 
-        pub fn wakeUp(self: *zw.EventLoop) void {
+        pub inline fn wakeUp(self: *zw.EventLoop) void {
             setEvent(self.platform_specific.wake_up_event);
         }
     };
@@ -100,13 +100,13 @@ pub const interface = struct {
             self.platform_specific.setClientSize(size);
         }
 
-        pub inline fn setMinSurfaceSize(self: *zw.Window, size: zw.Size) void {
+        pub fn setMinSurfaceSize(self: *zw.Window, size: zw.Size) void {
             self.platform_specific.min_surface_size = size;
             const current_size = self.platform_specific.getClientRect().size();
             self.platform_specific.setClientSize(current_size);
         }
 
-        pub inline fn setMaxSurfaceSize(self: *zw.Window, size: zw.Size) void {
+        pub fn setMaxSurfaceSize(self: *zw.Window, size: zw.Size) void {
             self.platform_specific.max_surface_size = size;
             const current_size = self.platform_specific.getClientRect().size();
             self.platform_specific.setClientSize(current_size);
@@ -400,6 +400,9 @@ pub const EventLoop = struct {
         var timeout_ns: u64 = infinite_timeout;
         self.sendEvent(.{ .about_to_wait = .{ .timeout_ns = &timeout_ns } });
 
+        // The `.about_to_wait` event might have requested the event loop to exit.
+        if (self.exiting) return;
+
         // NOTE:
         //  There's two ways for this function to wait for the requested time-out.
         //
@@ -461,6 +464,11 @@ pub const EventLoop = struct {
     /// thread.
     ///
     /// This function dispatches messages to the user's event handling function.
+    ///
+    /// # Remarks
+    ///
+    /// If the event loop is exiting, remaining events will be ignored and the function will
+    /// return immediately.
     pub fn dispatchPendingMessages(self: *EventLoop) void {
         const PeekMessage = win32.ui.windows_and_messaging.PeekMessageW;
         const DispatchMessage = win32.ui.windows_and_messaging.DispatchMessageW;
@@ -492,17 +500,9 @@ pub const EventLoop = struct {
     /// 2. Poll all events available in the message queue.
     ///
     /// 3. Clean up the state for the iteration.
-    ///
-    /// # Remarks
-    ///
-    /// If the event loop is exiting, remaining events will be ignored and the function will
-    /// return immediately.
     pub fn runEventLoopIteration(self: *EventLoop) void {
         self.waitForMoreMessages();
-        if (self.exiting) return;
         self.dispatchPendingMessages();
-        for (self.windows.items) |win|
-            win.notifyEndOfMessageLoopIteration();
     }
 };
 
@@ -1054,12 +1054,6 @@ pub const Window = struct {
                 });
             }
         }
-    }
-
-    /// Notifies the window state that no more events are available in the message queue.
-    pub fn notifyEndOfMessageLoopIteration(self: *Window) void {
-        self.flushPendingKeyboardState();
-        self.last_device_id = null;
     }
 
     /// Requests a `WM_PAINT` event to be posted on the window's message queue.
