@@ -476,13 +476,10 @@ pub const EventLoop = struct {
         // multiple events will be emitted.
 
         var msg: MSG = undefined;
-        while (PeekMessage(&msg, null, 0, 0, PM_REMOVE) != 0) {
+        while (PeekMessage(&msg, null, 0, 0, PM_REMOVE) != 0 and !self.exiting) {
             _ = TranslateMessage(&msg);
             _ = DispatchMessage(&msg);
         }
-
-        for (self.windows.items) |win|
-            win.notifyEndOfMessageLoopIteration();
     }
 
     /// Runs a complete event loop iteration to completion.
@@ -495,9 +492,17 @@ pub const EventLoop = struct {
     /// 2. Poll all events available in the message queue.
     ///
     /// 3. Clean up the state for the iteration.
+    ///
+    /// # Remarks
+    ///
+    /// If the event loop is exiting, remaining events will be ignored and the function will
+    /// return immediately.
     pub fn runEventLoopIteration(self: *EventLoop) void {
         self.waitForMoreMessages();
+        if (self.exiting) return;
         self.dispatchPendingMessages();
+        for (self.windows.items) |win|
+            win.notifyEndOfMessageLoopIteration();
     }
 };
 
