@@ -72,16 +72,23 @@ pub const interface = struct {
             gpa.destroy(self);
         }
 
-        pub inline fn surfaceRect(self: *zw.Window) zw.Rect {
-            return self.platform_specific.getClientRect();
+        pub fn surfaceRect(self: *zw.Window) zw.Rect {
+            const pos = self.platform_specific.getClientPosition();
+            const size = self.platform_specific.getClientSize();
+            return zw.Rect{
+                .x = pos.x,
+                .y = pos.y,
+                .width = size.width,
+                .height = size.height,
+            };
         }
 
         pub inline fn surfaceSize(self: *zw.Window) zw.Size {
-            return self.platform_specific.getClientRect().size();
+            return self.platform_specific.getClientSize();
         }
 
         pub inline fn surfacePosition(self: *zw.Window) zw.Position {
-            return self.platform_specific.getClientRect().position();
+            return self.platform_specific.getClientPosition();
         }
 
         pub inline fn outerRect(self: *zw.Window) zw.Rect {
@@ -121,8 +128,11 @@ pub const interface = struct {
         }
 
         pub inline fn isVisible(self: *zw.Window) bool {
-            const IsWindowVisible = win32.ui.windows_and_messaging.IsWindowVisible;
-            return IsWindowVisible(self.platform_specific.hwnd) != 0;
+            return self.platform_specific.isVisible();
+        }
+
+        pub inline fn isFocused(self: *zw.Window) bool {
+            return self.platform_specific.hasFocus();
         }
 
         pub fn show(self: *zw.Window, take_focus: bool) void {
@@ -137,6 +147,36 @@ pub const interface = struct {
         pub inline fn hide(self: *zw.Window) void {
             const ShowWindow = win32.ui.windows_and_messaging.ShowWindow;
             _ = ShowWindow(self.platform_specific.hwnd, win32.ui.windows_and_messaging.SW_HIDE);
+        }
+
+        pub fn setCursorVisible(self: *zw.Window, visible: bool) void {
+            self.platform_specific.cursor_visible = visible;
+            self.platform_specific.refreshCursor();
+        }
+
+        pub fn showCursor(self: *zw.Window) void {
+            self.platform_specific.cursor_visible = true;
+            self.platform_specific.refreshCursor();
+        }
+
+        pub fn hideCursor(self: *zw.Window) void {
+            self.platform_specific.cursor_visible = false;
+            self.platform_specific.refreshCursor();
+        }
+
+        pub fn setCursorConfined(self: *zw.Window, locked: bool) void {
+            self.platform_specific.cursor_confined = locked;
+            self.platform_specific.refreshCursor();
+        }
+
+        pub fn confineCursor(self: *zw.Window, locked: bool) void {
+            self.platform_specific.cursor_confined = locked;
+            self.platform_specific.refreshCursor();
+        }
+
+        pub fn releaseCursor(self: *zw.Window) void {
+            self.platform_specific.cursor_confined = false;
+            self.platform_specific.refreshCursor();
         }
     };
 };
@@ -585,6 +625,13 @@ pub const Window = struct {
     /// of `RAWINPUT`.
     rawinput_buffer: []align(@alignOf(win32.ui.input.RAWINPUT)) u8 = &.{},
 
+    /// Whether the cursor should be visible when it is over the window.
+    cursor_visible: bool = true,
+    /// Whether the cursor should be captured when the window has focus.
+    cursor_confined: bool = false,
+    /// The current cursor confinement rectangle.
+    current_cursor_confinement_rect: win32.foundation.RECT = std.mem.zeroes(win32.foundation.RECT),
+
     /// The name of the window class used when creating windows.
     pub const class_name = std.unicode.utf8ToUtf16LeStringLiteral("zig_window_class_name");
 
@@ -753,23 +800,39 @@ pub const Window = struct {
         self.setWindowPos(null, null, new_size, false, null);
     }
 
-    /// Returns the current client rect of the window.
-    pub fn getClientRect(self: *Window) zw.Rect {
+    /// Returns the current client size of the window.
+    pub fn getClientSize(self: *Window) zw.Size {
         const GetClientRect = win32.ui.windows_and_messaging.GetClientRect;
         const RECT = win32.foundation.RECT;
 
         var rect: RECT = undefined;
         const ret = GetClientRect(self.hwnd, &rect);
-
         if (std.debug.runtime_safety and ret == 0) {
             std.debug.panic("`GetClientRect` failed: {}", .{fmtLastError()});
         }
 
-        return zw.Rect{
-            .x = rect.left,
-            .y = rect.top,
+        // NOTE: `GetClientRect` should always return `left == top == 0`.
+        return zw.Size{
             .width = @intCast(rect.right - rect.left),
             .height = @intCast(rect.bottom - rect.top),
+        };
+    }
+
+    /// Returns the position of the client area of the window on the screen.
+    pub fn getClientPosition(self: *Window) zw.Position {
+        const ClientToScreen = win32.graphics.gdi.ClientToScreen;
+        const POINT = win32.foundation.POINT;
+
+        var point: POINT = .{ .x = 0, .y = 0 };
+        const ret = ClientToScreen(self.hwnd, &point);
+
+        if (std.debug.runtime_safety and ret == 0) {
+            std.debug.panic("`ClientToScreen` failed: {}", .{fmtLastError()});
+        }
+
+        return zw.Position{
+            .x = point.x,
+            .y = point.y,
         };
     }
 
@@ -800,7 +863,7 @@ pub const Window = struct {
         const window_size = self.clientToWindowSize(size) catch size;
         self.setWindowSize(window_size);
 
-        const actual_size = self.getClientRect().size();
+        const actual_size = self.getClientSize();
         if (actual_size.width != size.width or actual_size.height != size.height) {
             // We're likely maximized. Let's unmaximize the window.
             self.showWindow(SW_RESTORE);
@@ -1061,6 +1124,69 @@ pub const Window = struct {
         rawRedrawWindow(self.hwnd);
         self.manual_redraw_requested = true;
     }
+
+    /// Returns whether the window has keyboard focus.
+    pub fn hasFocus(self: *Window) bool {
+        const GetFocus = win32.ui.input.keyboard_and_mouse.GetFocus;
+        const focused_window = GetFocus() orelse return false;
+        return focused_window == self.hwnd;
+    }
+
+    /// Returns whether the window is visible.
+    pub inline fn isVisible(self: *Window) bool {
+        const IsWindowVisible = win32.ui.windows_and_messaging.IsWindowVisible;
+        return IsWindowVisible(self.hwnd) != 0;
+    }
+
+    /// Refreshes the cursor's state by using the current `cursor_visible` and `cursor_confined`
+    /// values.
+    pub fn refreshCursor(self: *Window) void {
+        const RECT = win32.foundation.RECT;
+
+        if (self.cursor_confined and self.hasFocus()) {
+            const client_size = self.getClientSize();
+            const client_position = self.getClientPosition();
+            var confinement_rect: RECT = undefined;
+
+            if (self.cursor_visible) {
+                // If the cursor is visible, confine the cursor to the client area of the window.
+                confinement_rect.left = client_position.x;
+                confinement_rect.right = client_position.x + @as(i32, @intCast(client_size.width));
+                confinement_rect.top = client_position.y;
+                confinement_rect.bottom = client_position.y + @as(i32, @intCast(client_size.height));
+            } else {
+                // If the cursor is not visible, confine the cursor in the middle of the window to
+                // lower the change if it interacting with something outside of the window.
+                const center_x = @divFloor(@as(i32, @intCast(client_size.width)), 2);
+                const center_y = @divFloor(@as(i32, @intCast(client_size.height)), 2);
+                confinement_rect.left = client_position.x + center_x;
+                confinement_rect.right = client_position.x + center_x + 1;
+                confinement_rect.top = client_position.y + center_y;
+                confinement_rect.bottom = client_position.y + center_y + 1;
+            }
+
+            // Calling `ClipCursor` causes a `WM_MOUSEMOVE` event to be sent to the window, so
+            // we want to avoid sending too many events when the clip rectangle doesn't actually
+            // changes.
+            if (self.current_cursor_confinement_rect.left != confinement_rect.left or
+                self.current_cursor_confinement_rect.top != confinement_rect.top or
+                self.current_cursor_confinement_rect.right != confinement_rect.right or
+                self.current_cursor_confinement_rect.bottom != confinement_rect.bottom)
+            {
+                self.current_cursor_confinement_rect = confinement_rect;
+                clipCursor(&confinement_rect);
+            }
+        } else {
+            self.current_cursor_confinement_rect = std.mem.zeroes(win32.foundation.RECT);
+            clipCursor(null);
+        }
+
+        if (!self.cursor_visible and self.is_mouse_hover) {
+            showCursor(false);
+        } else {
+            showCursor(true);
+        }
+    }
 };
 
 /// Contains information about a keyboard received by a window.
@@ -1219,6 +1345,7 @@ fn handleMessage(
     const WM_MBUTTONUP = win32.ui.windows_and_messaging.WM_MBUTTONUP;
     const WM_XBUTTONDOWN = win32.ui.windows_and_messaging.WM_XBUTTONDOWN;
     const WM_XBUTTONUP = win32.ui.windows_and_messaging.WM_XBUTTONUP;
+    const WM_MOVE = win32.ui.windows_and_messaging.WM_MOVE;
 
     switch (msg) {
 
@@ -1239,6 +1366,11 @@ fn handleMessage(
                 .width = width,
                 .height = height,
             } });
+            return 0;
+        },
+
+        // https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-move
+        WM_MOVE => {
             return 0;
         },
 
@@ -1365,6 +1497,7 @@ fn handleMessage(
 
             if (!window.is_mouse_hover) {
                 window.is_mouse_hover = true;
+                window.refreshCursor();
 
                 window.event_loop.sendEvent(.{ .pointer_entered = .{
                     .window = window.toPlatformAgnostic(),
@@ -1392,6 +1525,7 @@ fn handleMessage(
         // https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-mouseleave
         WM_MOUSELEAVE => {
             window.is_mouse_hover = false;
+            window.refreshCursor();
 
             window.event_loop.sendEvent(.{ .pointer_left = .{
                 .window = window.toPlatformAgnostic(),
@@ -1406,6 +1540,8 @@ fn handleMessage(
 
         // https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-killfocus
         WM_KILLFOCUS => {
+            window.refreshCursor();
+
             window.event_loop.sendEvent(.{ .focus_changed = .{
                 .window = window.toPlatformAgnostic(),
                 .focused = false,
@@ -1416,6 +1552,8 @@ fn handleMessage(
 
         // https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-setfocus
         WM_SETFOCUS => {
+            window.refreshCursor();
+
             window.event_loop.sendEvent(.{ .focus_changed = .{
                 .window = window.toPlatformAgnostic(),
                 .focused = true,
@@ -2355,4 +2493,37 @@ fn hasKeyboardEvents(hwnd: win32.foundation.HWND) bool {
 
     var msg: MSG = undefined;
     return PeekMessageW(&msg, hwnd, WM_KEYFIRST, WM_KEYLAST, PM_NOREMOVE) != 0;
+}
+
+/// Clips the cursor to the provided rectangle.
+fn clipCursor(rect: ?*const win32.foundation.RECT) void {
+    const ret = win32.ui.windows_and_messaging.ClipCursor(rect);
+    if (std.debug.runtime_safety and ret == 0) {
+        std.debug.panic("`ClipCursor` failed: {}", .{fmtLastError()});
+    }
+}
+
+/// Hides or shows the cursor.
+fn showCursor(shown: bool) void {
+    const ShowCursor = win32.ui.windows_and_messaging.ShowCursor;
+
+    // We need to use a global value to make sure we're not modifying the cursor's display
+    // counter multiple times in the same direction.
+    const Globals = struct {
+        var is_cursor_visible: bool = true;
+    };
+
+    if (shown == Globals.is_cursor_visible) {
+        return;
+    }
+
+    Globals.is_cursor_visible = shown;
+    const ret = ShowCursor(@intFromBool(shown));
+    if (std.debug.runtime_safety) {
+        if (shown and ret < 0) {
+            log.warn("`ShowCursor(true)` returned a negative display counter ({})", .{ret});
+        } else if (!shown and ret >= 0) {
+            log.warn("`ShowCursor(false)` returned a positive display counter ({})", .{ret});
+        }
+    }
 }

@@ -12,6 +12,8 @@ fn onEvent(app: *App, event_loop: *zw.EventLoop, event: zw.Event) void {
     switch (event) {
         .started => {
             const window = zw.Window.create(event_loop, .{}) catch @panic("error");
+            window.setCursorConfined(true);
+            window.setCursorVisible(false);
             app.* = App{ .window = window };
         },
         .stopped => app.window.destroy(),

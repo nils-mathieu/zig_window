@@ -1109,6 +1109,11 @@ pub const Window = struct {
         return platform.interface.window.isVisible(self);
     }
 
+    /// Returns whether the window has focus or not.
+    pub inline fn isFocused(self: *Window) bool {
+        return platform.interface.window.isFocused(self);
+    }
+
     // =============================================================================================
     // OTHER
     // =============================================================================================
@@ -1171,6 +1176,60 @@ pub const Window = struct {
     /// Hides the window.
     pub inline fn hide(self: *Window) void {
         return platform.interface.window.hide(self);
+    }
+
+    /// Sets whether the cursor should be visible or not.
+    ///
+    /// Note that this only takes effect while the cursor is hovering the window.
+    ///
+    /// # Parameters
+    ///
+    /// - `visible`: Whether the cursor should be visible or not.
+    pub inline fn setCursorVisible(self: *Window, visible: bool) void {
+        return platform.interface.window.setCursorVisible(self, visible);
+    }
+
+    /// Shows the cursor.
+    ///
+    /// Note that this only takes effect while the cursor is hovering the window.
+    pub inline fn showCursor(self: *Window) void {
+        return platform.interface.window.showCursor(self);
+    }
+
+    /// Hides the cursor.
+    ///
+    /// Note that this only takes effect while the cursor is hovering the window.
+    pub inline fn hideCursor(self: *Window) void {
+        return platform.interface.window.hideCursor(self);
+    }
+
+    /// Sets whether the cursor should be confined to the window's surface area.
+    ///
+    /// The surface area of a window corresponds to the drawable area of the window, not including
+    /// its eventual title bar and other OS-specific decorations.
+    ///
+    /// Note that this only takes effect while the window has focus.
+    ///
+    /// # Parameters
+    ///
+    /// - `locked`: Whether the cursor should be locked or not.
+    pub inline fn setCursorConfined(self: *Window, locked: bool) void {
+        return platform.interface.window.setCursorConfined(self, locked);
+    }
+
+    /// Prevents the cursor from leaving the window's surface area.
+    ///
+    /// The surface area of a window corresponds to the drawable area of the window, not including
+    /// its eventual title bar and other OS-specific decorations.
+    ///
+    /// Note that this only takes effect while the window has focus.
+    pub inline fn confineCursor(self: *Window, locked: bool) void {
+        return platform.interface.window.confineCursor(self, locked);
+    }
+
+    /// Releases the cursor and allows it to move freely within the window's surface area.
+    pub inline fn releaseCursor(self: *Window) void {
+        return platform.interface.window.releaseCursor(self);
     }
 };
 
