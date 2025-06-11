@@ -57,6 +57,9 @@ pub fn build(b: *std.Build) void {
 
             current_platform = "win32";
         },
+        .linux => {
+            current_platform = "x11";
+        },
         else => {},
     }
 
