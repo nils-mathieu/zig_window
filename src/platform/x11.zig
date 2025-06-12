@@ -6,6 +6,7 @@ const log = @import("../utility.zig").log;
 
 const c = @cImport({
     @cInclude("X11/Xlib.h");
+    @cInclude("X11/Xatom.h");
 });
 
 const impl = @This();
@@ -34,8 +35,8 @@ pub const interface = struct {
 
             switch (event.type) {
                 c.ClientMessage => {
-                    if (event.xclient.message_type == el.wm_protocols) {
-                        if (event.xclient.data.l[0] == el.wm_delete_window) {
+                    if (event.xclient.message_type == el.atom_wm_protocols) {
+                        if (event.xclient.data.l[0] == el.atom_wm_delete_window) {
                             const w = el.x11WindowToWindow(event.xclient.window);
                             el.sendEvent(.{ .close_requested = .{ .window = w.toParent() } });
                         }
@@ -105,12 +106,16 @@ pub const EventLoop = struct {
     /// The user-defined app responsible for handling events.
     user_app: zm.UserApp,
 
-    /// The `__ZIG_WINDOW` atom.
-    zig_window_atom: c.Atom,
     /// The `WM_PROTOCOLS` atom.
-    wm_protocols: c.Atom,
+    atom_wm_protocols: c.Atom,
     /// The `WM_DELETE_WINDOW` atom.
-    wm_delete_window: c.Atom,
+    atom_wm_delete_window: c.Atom,
+    /// The `UTF8_STRING` atom.
+    atom_utf8_string: c.Atom,
+    /// The `_NET_WM_NAME` atom.
+    atom_net_wm_name: c.Atom,
+    /// The `_NET_WM_ICON_NAME` atom.
+    atom_net_wm_icon_name: c.Atom,
 
     /// Whether the event loop has been requested to exit.
     exiting: bool = false,
@@ -123,16 +128,24 @@ pub const EventLoop = struct {
         const display = try openDisplay();
         errdefer closeDisplay(display);
 
-        const zig_window_atom, const wm_protocols, const wm_delete_window =
-            try internAtoms(display, 3, .{ "__ZIG_WINDOW", "WM_PROTOCOLS", "WM_DELETE_WINDOW" }, false);
+        const wm_protocols, const wm_delete_window, const utf8_string, const net_wm_name, const net_wm_icon_name =
+            try internAtoms(display, 5, .{
+                "WM_PROTOCOLS",
+                "WM_DELETE_WINDOW",
+                "UTF8_STRING",
+                "_NET_WM_NAME",
+                "_NET_WM_ICON_NAME",
+            }, false);
 
         self.* = EventLoop{
             .display = display,
             .allocator = config.allocator,
             .user_app = config.user_app,
-            .zig_window_atom = zig_window_atom,
-            .wm_protocols = wm_protocols,
-            .wm_delete_window = wm_delete_window,
+            .atom_wm_protocols = wm_protocols,
+            .atom_wm_delete_window = wm_delete_window,
+            .atom_utf8_string = utf8_string,
+            .atom_net_wm_name = net_wm_name,
+            .atom_net_wm_icon_name = net_wm_icon_name,
         };
     }
 
@@ -158,10 +171,21 @@ pub const EventLoop = struct {
     ///
     /// The caller must ensure that the provided window ID is valid for this event loop.
     pub inline fn x11WindowToWindow(self: *EventLoop, w: c.Window) *Window {
-        for (self.windows.items) |win| {
+        for (self.windows.items) |win|
             if (win.window == w) return win;
-        }
         unreachable;
+    }
+
+    /// Sets the title of the provided window.
+    fn setWindowTitle(self: *EventLoop, window: c.Window, title: [:0]const u8) void {
+        // NOTE: For maximum compatibility, we use both `XStoreName` and `XChangeProperty`. The former is widely supported, but
+        // usually does not support UTF-8 encoded strings. The latter is more reliable and is preferred by modern window managers. It
+        // supports UTF-8 encoded strings and is more flexible.
+
+        storeName(self.display, window, title);
+        changeProperty(self.display, window, self.atom_net_wm_name, self.atom_utf8_string, 8, c.PropModeReplace, title);
+        setIconName(self.display, window, title);
+        changeProperty(self.display, window, self.atom_net_wm_icon_name, self.atom_utf8_string, 8, c.PropModeReplace, title);
     }
 };
 
@@ -217,12 +241,16 @@ pub const Window = struct {
         }
 
         const protocols = [_]c.Atom{
-            el.wm_delete_window,
+            el.atom_wm_delete_window,
         };
 
         if (c.XSetWMProtocols(el.display, window, @constCast(&protocols), protocols.len) == 0) {
             return handleLastError("XSetWMProtocols");
         }
+
+        const title = try el.allocator.dupeZ(u8, config.title);
+        defer el.allocator.free(title);
+        el.setWindowTitle(window, title);
 
         try el.windows.append(el.allocator, self);
 
@@ -291,4 +319,46 @@ fn internAtoms(display: *c.Display, comptime count: usize, names: [count][*:0]co
     }
 
     return result;
+}
+
+/// Stores the provided title on the provided window.
+///
+/// Checks for errors in safe builds.
+fn storeName(display: *c.Display, window: c.Window, title: [*:0]const u8) void {
+    if (std.debug.runtime_safety) {
+        last_error_event.error_code = 0;
+    }
+    _ = c.XStoreName(display, window, title);
+    if (std.debug.runtime_safety and last_error_event.error_code != 0) {
+        @branchHint(.cold);
+        log.warn("`XStoreName` failed: {}", .{last_error_event.error_code});
+    }
+}
+
+/// Stores the provided icon title on the provided window.
+///
+/// Checks for errors in safe builds.
+fn setIconName(display: *c.Display, window: c.Window, title: [*:0]const u8) void {
+    if (std.debug.runtime_safety) {
+        last_error_event.error_code = 0;
+    }
+    _ = c.XSetIconName(display, window, title);
+    if (std.debug.runtime_safety and last_error_event.error_code != 0) {
+        @branchHint(.cold);
+        log.warn("`XSetIconName` failed: {}", .{last_error_event.error_code});
+    }
+}
+
+/// Changes the a property of the provided window.
+///
+/// Checks for errors in safe builds.
+fn changeProperty(display: *c.Display, window: c.Window, property: c.Atom, t: c.Atom, format: c_int, mode: c_int, data: []const u8) void {
+    if (std.debug.runtime_safety) {
+        last_error_event.error_code = 0;
+    }
+    _ = c.XChangeProperty(display, window, property, t, format, mode, data.ptr, @intCast(data.len));
+    if (std.debug.runtime_safety and last_error_event.error_code != 0) {
+        @branchHint(.cold);
+        log.warn("`XChangeProperty` failed: {}", .{last_error_event.error_code});
+    }
 }
