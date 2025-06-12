@@ -58,6 +58,9 @@ pub fn build(b: *std.Build) void {
             current_platform = "win32";
         },
         .linux => {
+            zig_window_module.addSystemIncludePath(.{ .cwd_relative = "/usr/include" });
+            zig_window_module.linkSystemLibrary("X11", .{});
+            zig_window_module.link_libc = true;
             current_platform = "x11";
         },
         else => {},

@@ -14,5 +14,9 @@
             .hash = "zigwin32-25.0.28-preview-AAAAAI0J-wP-8_KKo4Yjr33XLhVhlJmeagGUedByaOnX",
             .lazy = true,
         },
+        .zig_math = .{
+            .url = "git+https://github.com/nils-mathieu/zig_math#89bc291239eb850d654a292942b06fe3f921e050",
+            .hash = "zig_math-0.0.1-QZAfd0BWBQBj1fUGPkOEr7e0V8UaTtX7pST4L5_bdRtw",
+        },
     },
 }
