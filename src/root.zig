@@ -1223,8 +1223,8 @@ pub const Window = struct {
     /// its eventual title bar and other OS-specific decorations.
     ///
     /// Note that this only takes effect while the window has focus.
-    pub inline fn confineCursor(self: *Window, locked: bool) void {
-        return platform.interface.window.confineCursor(self, locked);
+    pub inline fn confineCursor(self: *Window) void {
+        return platform.interface.window.confineCursor(self);
     }
 
     /// Releases the cursor and allows it to move freely within the window's surface area.

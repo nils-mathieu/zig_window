@@ -169,8 +169,8 @@ pub const interface = struct {
             self.platform_specific.refreshCursor();
         }
 
-        pub fn confineCursor(self: *zw.Window, locked: bool) void {
-            self.platform_specific.cursor_confined = locked;
+        pub fn confineCursor(self: *zw.Window) void {
+            self.platform_specific.cursor_confined = true;
             self.platform_specific.refreshCursor();
         }
 
