@@ -4,7 +4,7 @@
     .fingerprint = 0xc7b4225aa85bb478,
     .paths = .{
         "examples",
-        "srcs",
+        "src",
         "build.zig",
         "build.zig.zon",
     },
